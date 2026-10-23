@@ -1,0 +1,95 @@
+<!doctype html>
+<!-- tile-time-top (23 October 2026, 17:05 Paris): time range small, top left of a ZenRay Plan tile. Three designs; every value in :root, the panel writes only those variables. -->
+<!-- FR : heure en petit en haut à gauche de la tuile du Plan, trois designs, tout réglable depuis :root. -->
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan Time Top</title>
+<style>
+@font-face { font-family: 'InterVariable'; src: url('file:///Users/zenray/Library/Fonts/InterVariable.ttf'); font-weight: 100 900; }
+@font-face { font-family: 'AnthropicSerif'; src: url('file:///Users/zenray/Library/Fonts/AnthropicSerif-Regular.ttf'); font-weight: 400; }
+@font-face { font-family: 'GT Sectra LCG'; src: url('file:///Users/zenray/Library/Fonts/GT-Sectra-LCGV-Regular.otf'); font-weight: 400; }
+:root {
+  --zr-police-sans: 'InterVariable', 'Hiragino Sans W4', sans-serif;
+  --zr-police-serif: 'AnthropicSerif', serif;
+  --zr-police-sectra: 'GT Sectra LCG', 'AnthropicSerif', serif;
+  /* Parameters / paramètres */
+  --time-size: 11.5px;   /* time size */
+  --time-opacity: .66;   /* time strength */
+  --time-gap: 2px;       /* space between time and title */
+  --task-size: 15px;     /* title, PLAN_UI.type.task */
+  --tile-width: 200px;   /* day column */
+  --rule-width: 18px;    /* design 2: thin rule after the time */
+  --bg: #e9e7e3; --fg: #1d1d1f; --muted: #6e6e73; --glass-a: rgba(255,255,255,.8); --glass-b: rgba(255,255,255,.55); --line: rgba(0,0,0,.08); --accent: #cc7c5e; --gold-a: #d9b56a; --gold-b: #c99a45;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #1b1b1d; --fg: #f2f2f4; --muted: #a1a1a6; --glass-a: rgba(64,64,68,.85); --glass-b: rgba(46,46,50,.65); --line: rgba(255,255,255,.08); --gold-a: #9a7a3c; --gold-b: #7d6230; } }
+:root[data-theme="dark"] { --bg: #1b1b1d; --fg: #f2f2f4; --muted: #a1a1a6; --glass-a: rgba(64,64,68,.85); --glass-b: rgba(46,46,50,.65); --line: rgba(255,255,255,.08); --gold-a: #9a7a3c; --gold-b: #7d6230; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 28px 16px 40px; background: var(--bg); color: var(--fg); font-family: var(--zr-police-sans); }
+h1 { font-family: var(--zr-police-sectra); font-weight: 400; font-size: 26px; margin: 0 0 4px; }
+p.lead { color: var(--muted); margin: 0 0 22px; font-size: 14px; }
+.designs { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px; }
+.card { padding: 16px; border-radius: 16px; background: var(--line); }
+.card h2 { font-size: 15px; font-weight: 400; margin: 0 0 4px; }
+.card h2 b { font-family: var(--zr-police-serif); font-weight: 400; color: var(--accent); margin-right: 6px; }
+.card p { font-size: 13px; color: var(--muted); margin: 0 0 14px; }
+.day { width: var(--tile-width); display: grid; gap: 6px; }
+.task { display: grid; grid-template-columns: 15px minmax(0,1fr); gap: 6px; align-items: center; padding: 8px 9px; border-radius: 11px; font-size: var(--task-size); line-height: 1.22;
+  background: linear-gradient(135deg, var(--glass-a), var(--glass-b)); box-shadow: 0 0 0 1px var(--line); }
+.task.gold { background: linear-gradient(135deg, var(--gold-a), var(--gold-b)); color: #fff; }
+.check { width: 16px; height: 16px; border-radius: 999px; border: 1px solid currentColor; opacity: .55; }
+.body { display: grid; gap: var(--time-gap); min-width: 0; }
+.title { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.time { font-size: var(--time-size); opacity: var(--time-opacity); letter-spacing: .01em; line-height: 1; }
+.d1 .time { font-family: var(--zr-police-sectra); }
+.d2 .time { font-family: var(--zr-police-sectra); display: flex; align-items: center; gap: 6px; opacity: calc(var(--time-opacity) + .2); }
+.d2 .time::after { content: ''; width: var(--rule-width); height: 1px; background: currentColor; opacity: .5; }
+.d3 .time { font-family: var(--zr-police-serif); }
+.panel { margin-top: 22px; max-width: 520px; padding: 12px; border-radius: 14px; background: var(--glass-a); box-shadow: 0 0 0 1px var(--line); font-size: 13px; }
+.panel label { display: grid; grid-template-columns: 1fr 52px; gap: 2px 8px; margin-bottom: 6px; }
+.panel input { grid-column: 1 / -1; }
+.panel output { text-align: right; font-family: var(--zr-police-serif); }
+.panel .row { display: flex; gap: 6px; }
+.panel button { flex: 1; font: inherit; padding: 6px; border-radius: 9px; border: 0; background: var(--line); color: var(--fg); cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>Heure en haut à gauche</h1>
+<p class="lead">Trois tuiles du Plan, l’heure calculée en petit au-dessus du titre. 1 et 2 en GT Sectra, 3 en Anthropic Serif.</p>
+<div class="designs" id="designs"></div>
+<div class="panel" id="panel"></div>
+<script>
+// Data and designs, one place. / données et designs, un seul endroit.
+const TASKS = [
+  { start: '09:00', end: '10:30', title: 'Exécution Andreas Method : contacter les studios par mail, au moins 10 par jour' },
+  { start: '12:00', end: '13:30', title: 'sport' },
+  { start: '10:30', end: '12:00', title: 'prospection + contacts missions', gold: true },
+]
+const DESIGNS = [
+  { key: 'd1', name: 'Sectra discret', note: 'GT Sectra, gris doux, rien d’autre.' },
+  { key: 'd2', name: 'Sectra et filet', note: 'GT Sectra un peu plus net, suivi d’un filet fin.' },
+  { key: 'd3', name: 'Anthropic Serif', note: 'La règle des chiffres : Anthropic Serif pour tous les nombres.' },
+]
+const PARAMS = [
+  ['--time-size', 'Taille de l’heure', 9, 15, .5, 'px'],
+  ['--time-opacity', 'Force de l’heure', .3, 1, .02, ''],
+  ['--time-gap', 'Espace heure et titre', 0, 8, 1, 'px'],
+  ['--task-size', 'Taille du titre', 12, 18, 1, 'px'],
+  ['--tile-width', 'Largeur de colonne', 150, 300, 5, 'px'],
+  ['--rule-width', 'Filet du design 2', 0, 40, 1, 'px'],
+]
+const tile = (t) => `<div class="task${t.gold ? ' gold' : ''}"><span class="check"></span><span class="body"><span class="time">${t.start}-${t.end}</span><span class="title">${t.title}</span></span></div>`
+document.getElementById('designs').innerHTML = DESIGNS.map((d, i) =>
+  `<section class="card ${d.key}"><h2><b>${i + 1}</b>${d.name}</h2><p>${d.note}</p><div class="day">${TASKS.map(tile).join('')}</div></section>`).join('')
+const root = document.documentElement, css = getComputedStyle(root)
+document.getElementById('panel').innerHTML = PARAMS.map(([v, label, min, max, step, unit]) => {
+  const val = parseFloat(css.getPropertyValue(v))
+  return `<label>${label}<output id="o${v}">${val}${unit}</output><input type="range" data-v="${v}" data-u="${unit}" min="${min}" max="${max}" step="${step}" value="${val}"></label>`
+}).join('') + `<div class="row"><button id="theme">Clair / sombre</button><button id="copy">Copier les valeurs pour le prompt</button></div>`
+document.querySelectorAll('.panel input').forEach((el) => el.addEventListener('input', () => { root.style.setProperty(el.dataset.v, el.value + el.dataset.u); document.getElementById('o' + el.dataset.v).textContent = el.value + el.dataset.u }))
+document.getElementById('theme').onclick = () => { root.dataset.theme = (root.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark' ? 'light' : 'dark' }
+document.getElementById('copy').onclick = () => { const line = 'Plan time top : ' + PARAMS.map(([v]) => `${v}: ${getComputedStyle(root).getPropertyValue(v).trim()}`).join('; '); navigator.clipboard.writeText(line).catch(() => prompt('Copie :', line)) }
+</script>
+</body>
+</html>
