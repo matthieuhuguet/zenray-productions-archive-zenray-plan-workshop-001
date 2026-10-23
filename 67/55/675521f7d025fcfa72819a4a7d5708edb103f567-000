@@ -1,0 +1,51 @@
+// CaptureFrames.mjs (23 October 2026, 18:55 Paris): films the Plan entry lab in a headless browser, one
+// filmstrip per variant (slow motion frames) and one real-speed video, at a desktop size.
+// FR : filme le banc d'entrée du Plan sans écran : une planche par variante (ralenti) et une vidéo à vitesse réelle.
+// Usage: node CaptureFrames.mjs [A B C]
+import { createRequire } from 'node:module'
+import { mkdirSync } from 'node:fs'
+const require = createRequire('/Users/zenray/Create/Build/Productions/GithubProductions/ZenRayProgress/package.json')
+const { chromium } = require('playwright')
+
+const PARAMS = {
+  url: 'http://127.0.0.1:5211/plan-lab.html',
+  size: { width: 1600, height: 1000 },
+  slowMs: 4000,                       // one step in slow motion
+  fractions: [0.2, 0.45, 0.7, 1.0],   // where each step is photographed
+  out: new URL('../frames/', import.meta.url).pathname,
+}
+const variants = process.argv.slice(2).length ? process.argv.slice(2) : ['A', 'B', 'C']
+mkdirSync(PARAMS.out, { recursive: true })
+
+// The repo's Playwright expects build 1228; the cache holds 1234, which drives the same protocol. / build installée.
+const browser = await chromium.launch({ executablePath: '/Users/zenray/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell' })
+for (const v of variants) {
+  const ctx = await browser.newContext({ viewport: PARAMS.size, recordVideo: { dir: PARAMS.out + 'video-' + v, size: PARAMS.size }, colorScheme: 'light' })
+  const page = await ctx.newPage()
+  await page.goto(PARAMS.url)
+  await page.waitForSelector('.zrp-day.zrp-today')
+  await page.waitForTimeout(2500)                       // first auto play at real speed
+  await page.evaluate(() => { const p = document.querySelector('.pez-panel'); if (!p.classList.contains('pez-min')) document.querySelector('.pez-toggle').click() })
+  await page.evaluate((key) => [...document.querySelectorAll('.pez-variants button')].find((b) => b.textContent.startsWith(key)).click(), v)
+  await page.waitForTimeout(2200)                       // variant replays at real speed (on video)
+  await page.screenshot({ path: `${PARAMS.out}${v}-open-real.png` })
+  await page.evaluate(() => window.__pez.close()); await page.waitForTimeout(900)
+  await page.screenshot({ path: `${PARAMS.out}${v}-closed-real.png` })
+  // Slow motion. / ralenti.
+  await page.evaluate((ms) => { const r = document.documentElement.style; r.setProperty('--pez-step1-ms', ms); r.setProperty('--pez-step2-ms', ms); r.setProperty('--pez-pause-ms', 0) }, PARAMS.slowMs)
+  await page.evaluate(() => { window.__t0 = performance.now(); window.__pez.play() })
+  const shoot = async (name, at) => {
+    const now = await page.evaluate(() => performance.now() - window.__t0)
+    if (at > now) await page.waitForTimeout(at - now)
+    await page.screenshot({ path: `${PARAMS.out}${v}-${name}.png` })
+  }
+  const lead = 250
+  for (const f of PARAMS.fractions) await shoot(`1-${Math.round(f * 100)}`, lead + f * PARAMS.slowMs)
+  for (const f of PARAMS.fractions) await shoot(`2-${Math.round(f * 100)}`, lead + PARAMS.slowMs + f * PARAMS.slowMs)
+  await page.waitForTimeout(300)
+  await page.evaluate(() => { window.__t0 = performance.now(); window.__pez.close() })
+  for (const f of PARAMS.fractions) await shoot(`3-${Math.round(f * 100)}`, f * PARAMS.slowMs)
+  await ctx.close()
+}
+await browser.close()
+console.log('frames in', PARAMS.out)

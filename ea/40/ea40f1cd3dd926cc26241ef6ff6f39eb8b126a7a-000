@@ -1,0 +1,3 @@
+#!/bin/zsh
+# dev-server-plan-check.sh (23 October 2026): serves the clean worktree with the real Plan focus on 5212.
+cd /Users/zenray/.claude/tmp/tmp-zenray-plan/entry-zoom-v2/work && exec node_modules/.bin/vite --port 5212 --strictPort

@@ -1,0 +1,63 @@
+// CheckFocus.mjs (23 October 2026, 19:50 Paris): checks the real Plan day focus in a headless browser.
+// Slow motion by the DevTools animation rate, frames of entry, close (ping pong) and double click, plus
+// measured checks: the widget opens centered, closing leaves no transform and no animation behind.
+// FR : vérifie le vrai mode Focus sans écran, au ralenti, avec des contrôles mesurés. Usage : node CheckFocus.mjs [light|dark]
+import { createRequire } from 'node:module'
+import { mkdirSync } from 'node:fs'
+const require = createRequire('/Users/zenray/Create/Build/Productions/GithubProductions/ZenRayProgress/package.json')
+const { chromium } = require('playwright')
+
+const PARAMS = {
+  url: 'http://127.0.0.1:5212/plan-check.html',
+  size: { width: 1600, height: 1000 },
+  rate: 0.1,                     // 350 ms becomes 3.5 s
+  stepMs: 3500,
+  out: new URL('../check/', import.meta.url).pathname,
+  exe: '/Users/zenray/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell',
+}
+const theme = process.argv[2] || 'light'
+mkdirSync(PARAMS.out, { recursive: true })
+const browser = await chromium.launch({ executablePath: PARAMS.exe })
+const page = await browser.newPage({ viewport: PARAMS.size, colorScheme: theme })
+const errors = []
+page.on('pageerror', (e) => errors.push(String(e)))
+page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+const cdp = await page.context().newCDPSession(page)
+await cdp.send('Animation.enable')
+await cdp.send('Animation.setPlaybackRate', { playbackRate: PARAMS.rate })
+await page.goto(PARAMS.url + (theme === 'dark' ? '?theme=dark' : ''))
+await page.waitForSelector('.zrp-grid > .zrp-day.zrp-today')
+const shot = (n) => page.screenshot({ path: `${PARAMS.out}${theme}-${n}.png` })
+const t0 = Date.now(), at = async (ms) => { const d = ms - (Date.now() - t0); if (d > 0) await page.waitForTimeout(d) }
+// Entry: delay 450 ms real time, then step 1, pause, step 2. / entrée.
+await at(450 + PARAMS.stepMs * 0.5); await shot('1-entry-week-mid')
+await at(450 + PARAMS.stepMs * 1.05); await shot('2-entry-week-end')
+await at(450 + PARAMS.stepMs * 1.5); await shot('3-entry-day-mid')
+await at(450 + PARAMS.stepMs * 2.3); await shot('4-entry-day-end')
+const opened = await page.evaluate(() => {
+  const w = document.querySelector('.zrp-focus-day').getBoundingClientRect()
+  return { visible: getComputedStyle(document.querySelector('.zrp-focus-day')).display, cx: Math.round(w.left + w.width / 2), cy: Math.round(w.top + w.height / 2), tiles: document.querySelectorAll('.zrp-focus-tasks .zrp-task').length }
+})
+// Click beside: ping pong back. / clic à côté.
+await page.mouse.click(60, PARAMS.size.height - 60)
+await page.waitForTimeout(PARAMS.stepMs * 0.5); await shot('5-close-mid')
+await page.waitForTimeout(PARAMS.stepMs * 0.8); await shot('6-close-end')
+const closed = await page.evaluate(() => ({
+  stageTransform: document.querySelector('.zrp-stage').style.transform || 'none',
+  stageAnimations: document.querySelector('.zrp-stage').getAnimations().length,
+  cellAnimations: [...document.querySelectorAll('.zrp-grid > .zrp-day')].reduce((n, c) => n + c.getAnimations().filter((a) => !(a instanceof CSSAnimation)).length, 0),
+  widget: getComputedStyle(document.querySelector('.zrp-focus-day')).display,
+  ghosts: document.querySelectorAll('.zrp-focus-layer .zrp-day').length,
+}))
+// Double click on tomorrow. / double-clic sur demain.
+const tomorrow = await page.evaluate(() => { const t = document.querySelector('.zrp-grid > .zrp-day.zrp-today'); const n = t.nextElementSibling; const r = n.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.bottom - 12, iso: n.dataset.iso, top: Math.round(r.top) } })
+await page.mouse.dblclick(tomorrow.x, tomorrow.y)
+await page.waitForTimeout(PARAMS.stepMs * 2.4); await shot('7-dblclick-end')
+const dbl = await page.evaluate(() => document.querySelector('.zrp-focus-date')?.textContent)
+await page.keyboard.press('Escape'); await page.waitForTimeout(PARAMS.stepMs * 1.3)
+// Sticky toolbar contrast. / barre collée.
+await cdp.send('Animation.setPlaybackRate', { playbackRate: 1 })
+await page.mouse.move(800, 600); await page.mouse.wheel(0, 900); await page.waitForTimeout(600)
+await page.screenshot({ path: `${PARAMS.out}${theme}-8-toolbar.png`, clip: { x: 0, y: 0, width: PARAMS.size.width, height: 140 } })
+console.log(JSON.stringify({ theme, opened, closed, dblclick: { target: tomorrow.iso, label: dbl }, errors }, null, 1))
+await browser.close()

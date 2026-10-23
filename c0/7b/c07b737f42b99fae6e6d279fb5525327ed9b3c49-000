@@ -1,0 +1,11 @@
+# Sheet.py (23 October 2026): filmstrip of one variant, rows = step 1, step 2, close. / planche d'une variante.
+import sys
+from PIL import Image
+d = '/Users/zenray/.claude/tmp/tmp-zenray-plan/entry-zoom-v2/frames/'
+v = sys.argv[1]
+W, H = 560, 350
+names = [f'{v}-{s}-{p}' for s in (1, 2, 3) for p in (20, 45, 70, 100)]
+sheet = Image.new('RGB', (W * 4, H * 3), 'white')
+for i, n in enumerate(names):
+    sheet.paste(Image.open(d + n + '.png').convert('RGB').resize((W, H)), ((i % 4) * W, (i // 4) * H))
+sheet.save(d + f'{v}-sheet.png')

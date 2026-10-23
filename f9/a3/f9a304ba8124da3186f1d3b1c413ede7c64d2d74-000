@@ -1,0 +1,3 @@
+#!/bin/zsh
+# dev-server-plan-lab.sh (23 October 2026): serves the ZenRay Plan entry zoom lab (plan-lab.html) on 5211.
+cd /Users/zenray/Create/Build/Productions/GithubProductions/ZenRayProgress && exec node_modules/.bin/vite --port 5211 --strictPort

@@ -1,0 +1,11 @@
+// DumpPlan.mjs (23 October 2026): read-only copy of the live Plan for the design harness, never writes.
+// FR : copie en lecture seule du Plan pour le banc de design, n'écrit jamais.
+import { execFileSync } from 'node:child_process'
+import { writeFileSync } from 'node:fs'
+const PARAMS = { siteUrl: 'https://zenray-progress.pages.dev', planPath: 'pages/Calendar-76ct/Matthieu2026-l8at.plan.json', out: new URL('./plan.json', import.meta.url) }
+const secret = process.env.ZR_API_SECRET || execFileSync('security', ['find-generic-password', '-a', 'zenray', '-s', 'zenray-progress-api', '-w']).toString().trim()
+const r = await fetch(`${PARAMS.siteUrl}/api/page?action=read&fresh=1&path=${encodeURIComponent(PARAMS.planPath)}`, { headers: { 'x-zr-auth': secret }, cache: 'no-store' })
+const j = await r.json()
+const board = JSON.parse(j.markdown)
+writeFileSync(PARAMS.out, JSON.stringify(board))
+console.log(board.title, board.tasks.length, 'tasks')
