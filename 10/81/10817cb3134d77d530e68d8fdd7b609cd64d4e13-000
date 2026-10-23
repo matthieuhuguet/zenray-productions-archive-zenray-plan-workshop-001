@@ -1,0 +1,387 @@
+<!doctype html>
+<!-- zenray-plan-entry-zoom (23 October 2026, 17:20 Paris): ZenRay Plan opens straight on "Matthieu 2026", travels to the current week (step 1), then zooms on today as a centered day widget (step 2). Three designs, one definition; every value lives in :root, the panel only writes those variables. -->
+<!-- FR : le Plan s'ouvre directement sur Matthieu 2026, traveling vers la semaine (étape 1), puis zoom sur le jour en widget centré (étape 2). Trois designs, une seule définition ; toutes les valeurs vivent dans :root. -->
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan Entry Zoom</title>
+<style>
+@font-face { font-family: 'InterVariable'; src: url('../_shared/fonts/InterVariable.woff2') format('woff2'), url('file:///Users/zenray/Library/Fonts/InterVariable.ttf'); font-weight: 100 900; }
+@font-face { font-family: 'AnthropicSerif'; src: url('../_shared/fonts/AnthropicSerif-Regular.ttf'), url('file:///Users/zenray/Library/Fonts/AnthropicSerif-Regular.ttf'); font-weight: 400; }
+@font-face { font-family: 'GTSectraLCG'; src: url('../_shared/fonts/GT-Sectra-LCGV-Regular.woff2') format('woff2'), url('file:///Users/zenray/Library/Fonts/GT-Sectra-LCGV-Regular.otf'); font-weight: 400; }
+:root {
+  --zr-police-sans: 'InterVariable', 'Hiragino Sans W4', sans-serif;
+  --zr-police-serif: 'AnthropicSerif', 'Hiragino Mincho ProN W3', serif;
+  --zr-police-titres: 'GTSectraLCG', 'AnthropicSerif', serif;
+  /* Animation parameters (panel) / paramètres d'animation */
+  --step1-ms: 350;          /* traveling to the week */
+  --step2-ms: 350;          /* zoom on the day */
+  --pause-ms: 120;          /* hold between the two steps */
+  --week-zoom: 1.7;         /* camera scale on the week */
+  --day-zoom: 2.6;          /* design 1: camera scale on the day */
+  --pop-width: 520px;       /* day widget width */
+  --backdrop-blur: 14px;    /* blur behind the widget */
+  --dim: .32;               /* darkening behind the widget */
+  --ease: cubic-bezier(.32,.72,0,1);
+  /* Layout / mise en page */
+  --stage-h: 600px;
+  --task-size: 15px;
+  /* Theme / thème */
+  --bg: #ecebe8; --fg: #1d1d1f; --muted: #6e6e73; --cell: #f6f5f3; --glass-a: rgba(255,255,255,.80); --glass-b: rgba(255,255,255,.56);
+  --line: rgba(0,0,0,.08); --accent: #cc7c5e; --green: #34c759; --red: #ff3b30; --shadow: 0 30px 80px rgba(0,0,0,.28);
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #1b1b1d; --fg: #f2f2f4; --muted: #a1a1a6; --cell: #252528; --glass-a: rgba(58,58,62,.82); --glass-b: rgba(40,40,44,.64); --line: rgba(255,255,255,.08); --shadow: 0 30px 80px rgba(0,0,0,.6); } }
+:root[data-theme="dark"] { --bg: #1b1b1d; --fg: #f2f2f4; --muted: #a1a1a6; --cell: #252528; --glass-a: rgba(58,58,62,.82); --glass-b: rgba(40,40,44,.64); --line: rgba(255,255,255,.08); --shadow: 0 30px 80px rgba(0,0,0,.6); }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 28px 16px 140px; background: var(--bg); color: var(--fg); font-family: var(--zr-police-sans); font-weight: 400; }
+.num { font-family: var(--zr-police-serif); font-weight: 400; }
+h1 { font-family: var(--zr-police-titres); font-weight: 400; font-size: 30px; margin: 0 0 6px; }
+p.lead { color: var(--muted); margin: 0 0 24px; font-size: 14px; max-width: 760px; line-height: 1.5; }
+.card { max-width: 1100px; margin: 0 auto 34px; }
+.card header { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.card h2 { font-family: var(--zr-police-titres); font-weight: 400; font-size: 22px; margin: 0; }
+.card h2 b { font-family: var(--zr-police-serif); font-weight: 400; color: var(--accent); margin-right: 8px; }
+.card header p { flex: 1 1 320px; margin: 0; color: var(--muted); font-size: 13px; }
+button { font: inherit; color: var(--fg); cursor: pointer; }
+.btn { padding: 6px 12px; border-radius: 999px; border: 0; background: var(--line); font-size: 13px; }
+.stage { border-radius: 18px; overflow: hidden; background: var(--cell); box-shadow: 0 0 0 1px var(--line); }
+.appbar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; font-size: 13px; border-bottom: 1px solid var(--line); color: var(--muted); }
+.appbar strong { color: var(--fg); font-weight: 400; }
+.appbar .pill { padding: 2px 8px; border-radius: 999px; background: var(--line); }
+.appbar .pill.late { color: var(--red); }
+.viewport { position: relative; height: var(--stage-h); overflow: hidden; }
+.camera { position: absolute; inset: 0; transform-origin: 0 0; padding: 10px; display: grid; grid-template-rows: auto 1fr; gap: 6px; }
+.dow { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; padding: 0 6px; }
+.month { display: grid; grid-template-rows: repeat(5, 1fr); gap: 6px; min-height: 0; }
+.week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; min-height: 0; border-radius: 12px; transition: background .2s; }
+.week.on { background: var(--line); }
+.cell { position: relative; min-width: 0; min-height: 0; border-radius: 10px; padding: 6px; background: var(--bg); box-shadow: 0 0 0 1px var(--line); overflow: hidden; display: grid; align-content: start; gap: 3px; cursor: pointer; }
+.cell.out { opacity: .45; }
+.cell .d { font-size: 13px; }
+.cell.today .d { color: #fff; background: var(--accent); border-radius: 999px; padding: 0 6px; justify-self: start; }
+.cell.sel { box-shadow: 0 0 0 2px var(--accent); }
+.chip { font-style: normal; font-size: 9px; line-height: 1.25; padding: 2px 4px; border-radius: 5px; background: var(--glass-a); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chip.done { opacity: .45; text-decoration: line-through; }
+.chip.late { color: var(--red); }
+.scrim { position: absolute; inset: 0; opacity: 0; pointer-events: none; background: rgba(0,0,0,var(--dim)); backdrop-filter: blur(var(--backdrop-blur)); -webkit-backdrop-filter: blur(var(--backdrop-blur)); }
+.scrim.on { pointer-events: auto; }
+.iris { position: absolute; left: 0; top: 0; width: 100%; height: 100%; border-radius: 16px; pointer-events: none; box-shadow: 0 0 0 4000px rgba(0,0,0,0); }
+/* Day widget, shared / widget jour commun */
+.pop { position: absolute; left: 0; top: 0; width: min(var(--pop-width), calc(100% - 32px)); max-height: calc(100% - 32px); display: none; transform-origin: 0 0; border-radius: 22px; overflow: hidden;
+  background: linear-gradient(135deg, var(--glass-a), var(--glass-b)); backdrop-filter: blur(24px) saturate(1.4); -webkit-backdrop-filter: blur(24px) saturate(1.4); box-shadow: 0 0 0 1px var(--line), var(--shadow); }
+.pop .in { display: grid; grid-template-rows: auto auto 1fr auto; max-height: inherit; }
+.pop .head { display: flex; align-items: center; gap: 10px; padding: 18px 18px 6px; }
+.pop .head h3 { flex: 1; margin: 0; font-family: var(--zr-police-titres); font-weight: 400; font-size: 26px; line-height: 1.1; }
+.pop .head h3 .num { font-size: .92em; }
+.pop .nav { width: 30px; height: 30px; border-radius: 999px; border: 0; background: var(--line); font-size: 16px; }
+.pop .sub { padding: 0 18px 10px; font-size: 13px; color: var(--muted); }
+.pop .bar { height: 4px; border-radius: 4px; background: var(--line); margin: 0 18px 12px; overflow: hidden; }
+.pop .bar i { display: block; height: 100%; background: var(--green); border-radius: inherit; transition: width .3s var(--ease); }
+.list { overflow: auto; padding: 0 12px 6px; display: grid; gap: 6px; align-content: start; }
+.task { display: grid; grid-template-columns: 22px minmax(0,1fr) auto; gap: 8px; align-items: center; padding: 9px 10px; border-radius: 12px; background: var(--glass-a); box-shadow: 0 0 0 1px var(--line); font-size: var(--task-size); line-height: 1.25; font-family: var(--zr-police-serif); }
+.task .stack { display: grid; gap: 1px; min-width: 0; }
+.task .time { font-size: 12px; opacity: .62; }
+.task .dur { font-size: 12px; color: var(--muted); font-family: var(--zr-police-sans); }
+.task .late { font-size: 11px; color: var(--red); font-family: var(--zr-police-sans); }
+.check { width: 20px; height: 20px; border-radius: 999px; border: 1.5px solid var(--muted); background: none; padding: 0; display: grid; place-items: center; font-size: 12px; color: #fff; }
+.task.done .check { background: var(--green); border-color: var(--green); }
+.task.done .title { opacity: .45; text-decoration: line-through; }
+.add { display: flex; gap: 8px; padding: 8px 12px 14px; }
+.add input { flex: 1; min-width: 0; font: inherit; font-size: 14px; padding: 9px 12px; border-radius: 12px; border: 0; background: var(--line); color: var(--fg); }
+/* Design 2: timeline sheet and side peeks / feuille horaire et jours voisins */
+.peek { position: absolute; display: none; border-radius: 18px; background: linear-gradient(135deg, var(--glass-a), var(--glass-b)); box-shadow: 0 0 0 1px var(--line); padding: 14px; font-size: 13px; color: var(--muted); cursor: pointer; overflow: hidden; }
+.peek h4 { margin: 0 0 6px; font-family: var(--zr-police-titres); font-weight: 400; font-size: 18px; color: var(--fg); }
+.timeline { position: relative; overflow: auto; margin: 0 12px 6px; }
+.timeline .hours { position: relative; }
+.timeline .h { position: absolute; left: 0; right: 0; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); padding-left: 2px; }
+.timeline .block { position: absolute; left: 46px; right: 4px; border-radius: 10px; padding: 5px 8px; background: var(--glass-a); box-shadow: 0 0 0 1px var(--line), inset 3px 0 0 var(--accent); font-family: var(--zr-police-serif); font-size: 13px; line-height: 1.2; overflow: hidden; display: flex; gap: 6px; align-items: flex-start; }
+.timeline .block.done { opacity: .5; box-shadow: 0 0 0 1px var(--line), inset 3px 0 0 var(--green); }
+.timeline .block .check { width: 16px; height: 16px; flex: none; }
+.timeline .now { position: absolute; left: 40px; right: 0; height: 2px; background: var(--red); }
+/* Design 3: ring header / en-tête à anneau */
+.ringhead { display: flex; align-items: center; gap: 16px; padding: 18px 18px 10px; }
+.ring { position: relative; width: 74px; height: 74px; flex: none; }
+.ring svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+.ring circle { fill: none; stroke-width: 6; }
+.ring .bg { stroke: var(--line); }
+.ring .fg { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset .4s var(--ease); }
+.ring .big { position: absolute; inset: 0; display: grid; place-items: center; font-size: 30px; }
+.ringhead h3 { margin: 0; font-family: var(--zr-police-titres); font-weight: 400; font-size: 24px; }
+.ringhead p { margin: 2px 0 0; font-size: 13px; color: var(--muted); }
+.ringhead .navs { margin-left: auto; display: flex; gap: 6px; }
+/* Workshop panel, never shipped / panneau d'atelier, jamais en production */
+.panel { position: fixed; right: 16px; bottom: 16px; z-index: 10; width: min(310px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; padding: 12px; border-radius: 14px; background: var(--glass-a); box-shadow: 0 0 0 1px var(--line), 0 10px 30px rgba(0,0,0,.18); font-size: 13px; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
+.panel label { display: grid; grid-template-columns: 1fr 64px; gap: 2px 8px; margin-bottom: 6px; }
+.panel input, .panel select { grid-column: 1 / -1; }
+.panel select { font: inherit; padding: 4px; border-radius: 8px; border: 0; background: var(--line); color: var(--fg); }
+.panel output { text-align: right; font-family: var(--zr-police-serif); }
+.panel .row { display: flex; gap: 6px; margin-top: 6px; }
+.panel .row button { flex: 1; padding: 6px; border-radius: 9px; border: 0; background: var(--line); }
+.panel.min > :not(.toggle) { display: none; }
+.panel .toggle { width: 100%; border: 0; background: none; text-align: left; padding: 0 0 8px; color: var(--muted); }
+@media (max-width: 640px) { :root { --stage-h: 520px; } .chip { display: none; } }
+</style>
+</head>
+<body>
+<h1>ZenRay Plan, entrée directe</h1>
+<p class="lead">Le clic sur le tableau « Matthieu 2026 » disparaît : le Plan s’ouvre dessus, voyage en <span class="num" id="leadMs1">0,35</span> s jusqu’à la semaine, puis zoome en <span class="num" id="leadMs2">0,35</span> s sur aujourd’hui, centré. Clique un jour pour l’ouvrir, Échap ou un clic à côté pour revenir à la semaine, puis au mois. Les curseurs en bas à droite règlent les trois designs en même temps.</p>
+<div id="designs"></div>
+<div class="panel" id="panel"></div>
+
+<script>
+// Definition: data, designs and parameters in one place. (23 October 2026)
+// FR : définition, données, designs et paramètres au même endroit.
+const TODAY = '2026-10-23'
+const BOARD = { name: 'Matthieu 2026', goals: 268, overdue: 126 }
+const DESIGNS = [
+  { key: 'lens', name: 'Lentille', note: 'La caméra plonge dans la semaine puis dans le jour, et la case se détache en verre au centre de l’écran.' },
+  { key: 'strata', name: 'Strates', note: 'La semaine se pose, le jour se lève en feuille horaire avec la veille et le lendemain en bord d’écran.' },
+  { key: 'iris', name: 'Iris', note: 'Un projecteur se resserre sur la semaine puis sur le jour, qui s’ouvre en widget à anneau de progression.' },
+]
+const PARAMS = [
+  ['--step1-ms', 'Durée étape 1, semaine', 150, 900, 10, ''],
+  ['--step2-ms', 'Durée étape 2, jour', 150, 900, 10, ''],
+  ['--pause-ms', 'Pause entre les étapes', 0, 400, 10, ''],
+  ['--week-zoom', 'Zoom sur la semaine', 1, 2.6, .05, ''],
+  ['--day-zoom', 'Zoom sur le jour (Lentille)', 1.6, 4, .05, ''],
+  ['--pop-width', 'Largeur du widget', 340, 720, 10, 'px'],
+  ['--backdrop-blur', 'Flou derrière', 0, 30, 1, 'px'],
+  ['--dim', 'Assombrissement', 0, .7, .01, ''],
+]
+const EASES = { 'Feuille iOS': 'cubic-bezier(.32,.72,0,1)', 'Expo': 'cubic-bezier(.16,1,.3,1)', 'Rebond léger': 'cubic-bezier(.34,1.36,.64,1)', 'Doux': 'cubic-bezier(.65,0,.35,1)' }
+const POOL = [
+  ['09:00', '10:30', 'Exécution Andreas Method : contacter 10 studios'], ['10:30', '12:00', 'Prospection et contacts missions'],
+  ['14:00', '15:30', 'Japonais, boucle 15/2'], ['17:00', '17:45', 'Sport'], ['20:00', '20:30', 'Publication du jour'],
+  ['11:00', '12:00', 'Louisiana Bayou, textures'], ['15:30', '16:30', 'Fab, fiche produit'], ['09:00', '09:30', 'Nibir Khan RDV'],
+]
+
+// Data: one month of tasks, deterministic. / données : un mois de tâches, déterministe.
+const iso = (d) => d.toISOString().slice(0, 10)
+const addDays = (s, n) => { const d = new Date(s + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return iso(d) }
+const monday = (s) => { const d = new Date(s + 'T12:00:00Z'); return addDays(s, -((d.getUTCDay() + 6) % 7)) }
+const START = monday('2026-10-01')
+const store = {}
+const tasksOf = (day) => {
+  if (store[day]) return store[day]
+  const seed = +day.replaceAll('-', '') % 97, count = 2 + seed % 4, out = []
+  for (let i = 0; i < count; i++) {
+    const [s, e, t] = POOL[(seed + i * 3) % POOL.length]
+    const past = day < TODAY, done = past ? (seed + i) % 4 !== 0 : day === TODAY && i < 2
+    out.push({ id: day + i, start: s, end: e, title: t, done, late: past && !done })
+  }
+  return (store[day] = out.sort((a, b) => a.start.localeCompare(b.start)))
+}
+const mins = (s) => s.split(':').reduce((h, x) => h * 60 + +x, 0)
+const dur = (t) => { const m = mins(t.end) - mins(t.start); return (m >= 60 ? `${Math.floor(m / 60)} h ` : '') + (m % 60 ? `${m % 60} min` : '') }
+const n = (s) => `<span class="num">${s}</span>`
+const fmt = (day, opt) => new Date(day + 'T12:00:00Z').toLocaleDateString('en-GB', { timeZone: 'UTC', ...opt })
+const title = (day) => `${fmt(day, { weekday: 'long' })} ${n(fmt(day, { day: 'numeric' }))} ${fmt(day, { month: 'long' })}`
+const v = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+const num = (name) => parseFloat(v(name))
+
+// Instance: one stage per design, built from the same definition. / instance : une scène par design.
+function build(design, idx) {
+  const sec = document.createElement('section')
+  sec.className = 'card'
+  sec.innerHTML = `<header><h2><b>${idx + 1}</b>${design.name}</h2><p>${design.note}</p><button class="btn replay">Rejouer</button></header>
+  <div class="stage"><div class="appbar">ZenRay Plan › <strong>${BOARD.name}</strong> <span class="pill">${n(BOARD.goals)} goals</span> <span class="pill late">${n(BOARD.overdue)} overdue</span></div>
+  <div class="viewport"><div class="camera"><div class="dow">${['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((d) => `<span>${d}</span>`).join('')}</div><div class="month"></div></div>
+  <div class="scrim"></div><div class="iris"></div><div class="peek prev"></div><div class="peek next"></div><div class="pop"><div class="in"></div></div></div></div>`
+  const $ = (q) => sec.querySelector(q)
+  const S = { design: design.key, sec, vp: $('.viewport'), cam: $('.camera'), month: $('.month'), scrim: $('.scrim'), iris: $('.iris'), pop: $('.pop'), inn: $('.pop .in'), prev: $('.peek.prev'), next: $('.peek.next'), level: 'month', day: null, T: { x: 0, y: 0, s: 1 } }
+  for (let w = 0; w < 5; w++) {
+    const row = document.createElement('div'); row.className = 'week'
+    for (let d = 0; d < 7; d++) {
+      const day = addDays(START, w * 7 + d), c = document.createElement('div')
+      c.className = 'cell' + (day.slice(5, 7) !== '10' ? ' out' : '') + (day === TODAY ? ' today' : '')
+      c.dataset.day = day
+      c.innerHTML = `<span class="d num">${+day.slice(8)}</span>` + tasksOf(day).slice(0, 3).map((t) => `<i class="chip${t.done ? ' done' : ''}${t.late ? ' late' : ''}">${t.title}</i>`).join('')
+      c.onclick = (e) => { e.stopPropagation(); openDay(S, day) }
+      row.appendChild(c)
+    }
+    S.month.appendChild(row)
+  }
+  S.scrim.onclick = () => back(S)
+  S.cam.onclick = () => back(S)
+  $('.replay').onclick = () => play(S)
+  document.getElementById('designs').appendChild(sec)
+  return S
+}
+
+// Camera maths: rect in camera space -> transform that centers it. / maths de caméra.
+function local(S, el) { let x = 0, y = 0, e = el; while (e && e !== S.cam) { x += e.offsetLeft; y += e.offsetTop; e = e.offsetParent } return { x, y, w: el.offsetWidth, h: el.offsetHeight } }
+function frame(S, r, s) {
+  const W = S.vp.clientWidth, H = S.vp.clientHeight
+  const cl = (val, lo) => Math.min(0, Math.max(lo, val))
+  return { s, x: cl(W / 2 - s * (r.x + r.w / 2), W - s * W), y: cl(H / 2 - s * (r.y + r.h / 2), H - s * H) }
+}
+const tf = (T) => `translate(${T.x}px, ${T.y}px) scale(${T.s})`
+const onScreen = (S, r, T = S.T) => ({ x: T.x + T.s * r.x, y: T.y + T.s * r.y, w: T.s * r.w, h: T.s * r.h })
+const ms = (k) => num(k)
+const ease = () => v('--ease')
+function move(S, T, d) { const a = S.cam.animate([{ transform: tf(S.T) }, { transform: tf(T) }], { duration: d, easing: ease(), fill: 'forwards' }); S.T = T; return a.finished }
+function irisTo(S, r, d, dark) {
+  const from = S.iris.getBoundingClientRect(), base = S.vp.getBoundingClientRect()
+  const k = { left: (from.left - base.left) + 'px', top: (from.top - base.top) + 'px', width: from.width + 'px', height: from.height + 'px' }
+  const to = { left: r.x + 'px', top: r.y + 'px', width: r.w + 'px', height: r.h + 'px', boxShadow: `0 0 0 4000px rgba(0,0,0,${dark})` }
+  Object.assign(S.iris.style, to)
+  return S.iris.animate([k, to], { duration: d, easing: ease() }).finished
+}
+const wait = (t) => new Promise((r) => setTimeout(r, t))
+const cellOf = (S, day) => S.sec.querySelector(`.cell[data-day="${day}"]`)
+
+// Step 1: travel to the week. / étape 1 : traveling vers la semaine.
+async function toWeek(S, day) {
+  const cell = cellOf(S, day), row = cell.parentElement
+  S.sec.querySelectorAll('.week').forEach((w) => w.classList.toggle('on', w === row))
+  const wr = local(S, row), cr = local(S, cell)
+  const T = frame(S, { x: cr.x, y: wr.y, w: cr.w, h: wr.h }, num('--week-zoom'))
+  const jobs = [move(S, T, ms('--step1-ms'))]
+  if (S.design === 'iris') jobs.push(irisTo(S, onScreen(S, wr, T), ms('--step1-ms'), num('--dim') * .7))
+  await Promise.all(jobs)
+  S.level = 'week'
+}
+
+// Step 2: zoom on the day, the widget grows from the cell. / étape 2 : le widget naît de la case.
+async function toDay(S, day) {
+  S.day = day
+  S.sec.querySelectorAll('.cell').forEach((c) => c.classList.toggle('sel', c.dataset.day === day))
+  const cr = local(S, cellOf(S, day)), from = onScreen(S, cr), d = ms('--step2-ms'), jobs = []
+  if (S.design === 'lens') jobs.push(move(S, frame(S, cr, num('--day-zoom')), d))
+  if (S.design === 'iris') jobs.push(irisTo(S, onScreen(S, cr), d, num('--dim') + .25))
+  render(S)
+  S.pop.style.display = 'block'
+  const W = S.vp.clientWidth, H = S.vp.clientHeight, pw = S.pop.offsetWidth, ph = S.pop.offsetHeight
+  const L = (W - pw) / 2, Tp = (H - ph) / 2
+  Object.assign(S.pop.style, { left: L + 'px', top: Tp + 'px' })
+  const start = `translate(${from.x - L}px, ${from.y - Tp}px) scale(${from.w / pw}, ${from.h / ph})`
+  jobs.push(S.pop.animate([{ transform: start, borderRadius: '10px' }, { transform: 'none', borderRadius: '22px' }], { duration: d, easing: ease() }).finished)
+  S.inn.animate([{ opacity: 0 }, { opacity: 0, offset: .35 }, { opacity: 1 }], { duration: d })
+  if (S.design !== 'iris') { S.scrim.classList.add('on'); jobs.push(S.scrim.animate([{ opacity: 0 }, { opacity: 1 }], { duration: d, fill: 'forwards' }).finished) }
+  else S.scrim.classList.add('on')
+  if (S.design === 'strata') peeks(S, L, Tp, pw, ph, d)
+  await Promise.all(jobs)
+  S.level = 'day'
+}
+
+function peeks(S, L, Tp, pw, ph, d) {
+  const W = S.vp.clientWidth, gap = 18, pwk = Math.min(220, (W - pw) / 2 - gap)
+  ;[[S.prev, -1], [S.next, 1]].forEach(([el, k]) => {
+    if (pwk < 90) { el.style.display = 'none'; return }
+    const day = addDays(S.day, k), t = tasksOf(day)
+    el.innerHTML = `<h4>${fmt(day, { weekday: 'short' })} ${n(fmt(day, { day: 'numeric' }))}</h4>${n(t.filter((x) => x.done).length)} / ${n(t.length)} done`
+    Object.assign(el.style, { display: 'block', width: pwk + 'px', height: ph * .8 + 'px', top: Tp + ph * .1 + 'px', left: (k < 0 ? L - gap - pwk : L + pw + gap) + 'px' })
+    el.onclick = () => shift(S, k)
+    el.animate([{ opacity: 0, transform: `translateX(${-k * 40}px) scale(.9)` }, { opacity: .7, transform: 'none' }], { duration: d, delay: d * .4, easing: ease(), fill: 'both' })
+  })
+}
+
+// Back: day -> week -> month, reversing the same motion. / retour : jour, semaine, mois.
+async function back(S) {
+  if (S.busy) return
+  S.busy = true
+  if (S.level === 'day') {
+    const d = ms('--step2-ms'), cr = local(S, cellOf(S, S.day)), jobs = []
+    if (S.design === 'lens') { const row = cellOf(S, S.day).parentElement, wr = local(S, row); jobs.push(move(S, frame(S, { x: cr.x, y: wr.y, w: cr.w, h: wr.h }, num('--week-zoom')), d)) }
+    if (S.design === 'iris') jobs.push(irisTo(S, onScreen(S, local(S, cellOf(S, S.day).parentElement)), d, num('--dim') * .7))
+    const to = onScreen(S, cr), L = S.pop.offsetLeft, Tp = S.pop.offsetTop
+    jobs.push(S.pop.animate([{ transform: 'none', opacity: 1 }, { transform: `translate(${to.x - L}px, ${to.y - Tp}px) scale(${to.w / S.pop.offsetWidth}, ${to.h / S.pop.offsetHeight})`, opacity: 0 }], { duration: d, easing: ease() }).finished)
+    jobs.push(S.scrim.animate([{ opacity: getComputedStyle(S.scrim).opacity }, { opacity: 0 }], { duration: d, fill: 'forwards' }).finished)
+    ;[S.prev, S.next].forEach((el) => { el.style.display = 'none' })
+    await Promise.all(jobs)
+    S.pop.style.display = 'none'; S.scrim.classList.remove('on'); S.level = 'week'
+  } else if (S.level === 'week') {
+    const jobs = [move(S, { x: 0, y: 0, s: 1 }, ms('--step1-ms'))]
+    if (S.design === 'iris') jobs.push(irisTo(S, { x: 0, y: 0, w: S.vp.clientWidth, h: S.vp.clientHeight }, ms('--step1-ms'), 0))
+    S.sec.querySelectorAll('.week').forEach((w) => w.classList.remove('on'))
+    await Promise.all(jobs); S.level = 'month'
+  }
+  S.busy = false
+}
+
+async function openDay(S, day) {
+  if (S.busy) return
+  if (S.level === 'day') { if (day !== S.day) { S.day = day; render(S, 1) } return }
+  S.busy = true
+  const row = cellOf(S, day).parentElement
+  if (S.level === 'month' || !row.classList.contains('on')) { await toWeek(S, day); await wait(ms('--pause-ms')) }
+  await toDay(S, day)
+  S.busy = false
+}
+
+// Reset to the board opening state, then play both steps on today. / rejouer depuis l'ouverture.
+async function play(S) {
+  S.cam.getAnimations().forEach((a) => a.cancel()); S.pop.getAnimations().forEach((a) => a.cancel()); S.scrim.getAnimations().forEach((a) => a.cancel())
+  Object.assign(S.iris.style, { left: '0px', top: '0px', width: '100%', height: '100%', boxShadow: '0 0 0 4000px rgba(0,0,0,0)' })
+  S.pop.style.display = 'none'; S.scrim.classList.remove('on'); S.prev.style.display = S.next.style.display = 'none'
+  S.cam.style.transform = ''; S.T = { x: 0, y: 0, s: 1 }; S.level = 'month'; S.busy = false
+  S.sec.querySelectorAll('.week,.cell').forEach((e) => e.classList.remove('on', 'sel'))
+  await wait(350)
+  openDay(S, TODAY)
+}
+
+// Day content, same features in the three designs. / contenu du jour, mêmes fonctions partout.
+function render(S, dir = 0) {
+  const t = tasksOf(S.day), done = t.filter((x) => x.done).length, late = t.filter((x) => x.late).length
+  const sub = `${n(done)} / ${n(t.length)} done${late ? ` · ${n(late)} missed` : ''}`
+  const nav = `<button class="nav" data-k="-1" aria-label="Previous day">‹</button><button class="nav" data-k="1" aria-label="Next day">›</button>`
+  const add = `<form class="add"><input placeholder="+ Add a goal, e.g. 18:00-19:00 Japonais" aria-label="Add a goal"></form>`
+  const row = (x) => `<div class="task${x.done ? ' done' : ''}" data-id="${x.id}"><button class="check" aria-label="Done">${x.done ? '✓' : ''}</button><span class="stack"><span class="time">${n(x.start)} - ${n(x.end)}</span><span class="title">${x.title}</span>${x.late ? '<span class="late">Missed</span>' : ''}</span><span class="dur">${dur(x)}</span></div>`
+  let html
+  if (S.design === 'strata') {
+    const H0 = 8, H1 = 22, px = 46, hrs = Array.from({ length: H1 - H0 + 1 }, (_, i) => `<div class="h" style="top:${i * px}px">${n(String(H0 + i).padStart(2, '0') + ':00')}</div>`).join('')
+    const blocks = t.map((x) => `<div class="block${x.done ? ' done' : ''}" data-id="${x.id}" style="top:${(mins(x.start) / 60 - H0) * px}px;height:${Math.max(22, (mins(x.end) - mins(x.start)) / 60 * px - 3)}px"><button class="check">${x.done ? '✓' : ''}</button><span>${n(x.start)} ${x.title}</span></div>`).join('')
+    const now = S.day === TODAY ? `<div class="now" style="top:${(16.4 - H0) * px}px"></div>` : ''
+    html = `<div class="head"><h3>${title(S.day)}</h3>${nav}</div><div class="sub">${sub}</div><div class="timeline" style="max-height:${num('--stage-h') * .55}px"><div class="hours" style="height:${(H1 - H0) * px + 20}px">${hrs}${now}${blocks}</div></div>${add}`
+  } else if (S.design === 'iris') {
+    const C = 2 * Math.PI * 32, p = t.length ? done / t.length : 0
+    html = `<div class="ringhead"><div class="ring"><svg viewBox="0 0 74 74"><circle class="bg" cx="37" cy="37" r="32"/><circle class="fg" cx="37" cy="37" r="32" stroke-dasharray="${C}" stroke-dashoffset="${C * (1 - p)}"/></svg><span class="big num">${+S.day.slice(8)}</span></div><div><h3>${fmt(S.day, { weekday: 'long' })}</h3><p>${fmt(S.day, { month: 'long' })} · ${sub}</p></div><div class="navs">${nav}</div></div><div></div><div class="list">${t.map(row).join('')}</div>${add}`
+  } else {
+    html = `<div class="head"><h3>${title(S.day)}</h3>${nav}</div><div class="sub">${sub}</div><div class="bar"><i style="width:${t.length ? done / t.length * 100 : 0}%"></i></div><div class="list">${t.map(row).join('')}</div>${add}`
+  }
+  S.inn.innerHTML = html
+  if (dir) S.inn.animate([{ opacity: 0, transform: `translateX(${dir * 14}px)` }, { opacity: 1, transform: 'none' }], { duration: 220, easing: ease() })
+  S.inn.querySelectorAll('.nav').forEach((b) => { b.onclick = () => shift(S, +b.dataset.k) })
+  S.inn.querySelectorAll('[data-id] .check').forEach((b) => { b.onclick = () => { const x = t.find((y) => y.id === b.closest('[data-id]').dataset.id); x.done = !x.done; if (x.done) x.late = false; render(S); refreshCell(S, S.day) } })
+  S.inn.querySelector('form').onsubmit = (e) => {
+    e.preventDefault(); const val = e.target.querySelector('input').value.trim(); if (!val) return
+    const m = val.match(/^(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})\s+(.*)$/)
+    t.push({ id: S.day + 'n' + t.length + Date.now(), start: m ? m[1].padStart(5, '0') : '18:00', end: m ? m[2].padStart(5, '0') : '19:00', title: m ? m[3] : val, done: false, late: false })
+    t.sort((a, b) => a.start.localeCompare(b.start)); render(S); refreshCell(S, S.day)
+    S.inn.querySelector('input').focus()
+  }
+  if (S.design === 'strata' && S.pop.style.display === 'block') peeks(S, S.pop.offsetLeft, S.pop.offsetTop, S.pop.offsetWidth, S.pop.offsetHeight, 200)
+}
+function shift(S, k) { S.day = addDays(S.day, k); S.sec.querySelectorAll('.cell').forEach((c) => c.classList.toggle('sel', c.dataset.day === S.day)); render(S, k) }
+function refreshCell(S, day) { const c = cellOf(S, day); if (!c) return; c.innerHTML = `<span class="d num">${+day.slice(8)}</span>` + tasksOf(day).slice(0, 3).map((x) => `<i class="chip${x.done ? ' done' : ''}${x.late ? ' late' : ''}">${x.title}</i>`).join('') }
+
+const STAGES = DESIGNS.map(build)
+let lastStage = STAGES[0]
+STAGES.forEach((S) => S.sec.addEventListener('pointerdown', () => { lastStage = S }))
+addEventListener('keydown', (e) => { if (e.key === 'Escape') back(lastStage) })
+
+// Panel: writes :root variables only. / panneau : n'écrit que les variables de :root.
+const root = document.documentElement
+const panel = document.getElementById('panel')
+panel.innerHTML = `<button class="toggle">Paramètres ▾</button>` + PARAMS.map(([k, label, min, max, step, unit]) => {
+  const val = num(k)
+  return `<label>${label}<output id="o${k}">${val}${unit}</output><input type="range" data-v="${k}" data-u="${unit}" min="${min}" max="${max}" step="${step}" value="${val}"></label>`
+}).join('') + `<label>Courbe d’animation<select id="ease">${Object.entries(EASES).map(([name, c]) => `<option value="${c}"${c === v('--ease') ? ' selected' : ''}>${name}</option>`).join('')}</select></label>
+<div class="row"><button id="all">Tout rejouer</button><button id="theme">Clair / sombre</button></div><div class="row"><button id="copy">Copier les valeurs pour le prompt</button></div>`
+const lead = () => { document.getElementById('leadMs1').textContent = (ms('--step1-ms') / 1000).toLocaleString('fr-FR'); document.getElementById('leadMs2').textContent = (ms('--step2-ms') / 1000).toLocaleString('fr-FR') }
+panel.querySelectorAll('input').forEach((el) => el.addEventListener('input', () => { root.style.setProperty(el.dataset.v, el.value + el.dataset.u); document.getElementById('o' + el.dataset.v).textContent = el.value + el.dataset.u; lead() }))
+panel.querySelector('.toggle').onclick = () => panel.classList.toggle('min')
+document.getElementById('ease').onchange = (e) => root.style.setProperty('--ease', e.target.value)
+document.getElementById('all').onclick = () => STAGES.forEach(play)
+document.getElementById('theme').onclick = () => { root.dataset.theme = (root.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark' ? 'light' : 'dark' }
+document.getElementById('copy').onclick = () => {
+  const line = 'Plan entry zoom : ' + [...PARAMS.map(([k]) => k), '--ease'].map((k) => `${k}: ${v(k)}`).join('; ')
+  navigator.clipboard.writeText(line).catch(() => prompt('Copie :', line))
+}
+if (innerWidth < 700) panel.classList.add('min')
+lead()
+document.fonts.ready.then(() => STAGES.forEach(play))
+</script>
+</body>
+</html>
