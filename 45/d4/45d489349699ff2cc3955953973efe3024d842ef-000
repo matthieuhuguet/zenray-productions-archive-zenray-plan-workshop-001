@@ -1,0 +1,26 @@
+{
+  "description": "Revelation cinematique : interface posee sur une image, titre a fort interlettrage, glyphes de manette en SVG. Rien d'opaque, tout en voile et en halo.",
+  "formats": [
+    "F-web-article",
+    "F-still-1080-square",
+    "F-still-1080x1350",
+    "F-still-1080x1920",
+    "F-video-1920x1080",
+    "F-overlay-1920x1080"
+  ],
+  "beatCount": {
+    "min": 3,
+    "max": 8
+  },
+  "measure": 54,
+  "fonts": [
+    "Barlow",
+    "Barlow Semi Condensed",
+    "Barlow Condensed",
+    "JetBrains Mono"
+  ],
+  "calibration": {
+    "ref": "DS2",
+    "notes": "Couleurs prelevees element par element (zrm-pick) et NON par zrm-palette : sur une capture de jeu, les blocs plats sont le rendu 3D, pas l'interface. Police caracterisee grotesque sans famille decisive (police de jeu sous licence) ; Barlow retenue pour sa plage de graisses 100-900, indispensable au titre hairline que les 128 familles de presse ne peuvent pas rendre. MESURE 2026-07-28 sur le titre d'ecran : la capitale fait 47 px pour 36 de large, rapport 0,766. Barlow rend 0,97 — trop large d'un quart. Barlow Condensed est retenue pour les titres d'ecran ; Barlow reste la famille de texte."
+  }
+}

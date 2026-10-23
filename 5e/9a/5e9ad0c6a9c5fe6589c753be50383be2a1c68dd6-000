@@ -1,0 +1,38 @@
+// params.js (17 October 2026): EVERY value of the Plan <-> Google Calendar Worker lives here (HDA interface). Max 8 per group.
+// Override any value without redeploying code by setting the Worker variable PLAN_GCAL_PARAMS to a JSON object with the same shape.
+// FR : toutes les valeurs du Worker vivent ici ; PLAN_GCAL_PARAMS (JSON) en surcharge une partie sans toucher au code.
+export const DEFAULT_PARAMS = {
+  mapping: {
+    calendarId: 'primary',
+    timeZone: 'Europe/Paris',
+    defaultDurationMin: 60,
+    reminderMin: 10,
+    marks: { done: '✓', publish: '✦' },
+    publishColorId: '4',
+    maxNoteChars: 500,
+  },
+  import: {
+    importFrom: '2026-07-11',
+    importPastStatus: 'done',
+    skipEventTypes: ['birthday', 'focusTime', 'outOfOffice', 'workingLocation'],
+    readOnlyEventTypes: ['fromGmail'],
+    maxDeletesPerRun: 10,
+  },
+  runtime: {
+    siteUrl: 'https://zenray-progress.pages.dev',
+    planPath: 'pages/Calendar-76ct/Matthieu2026-l8at.plan.json',
+    futureHorizonDays: 730,
+    updatedOverlapSec: 180,   // fast path looks at events changed in the last 3 minutes (the tick runs every minute) / chemin rapide : changements des 3 dernieres minutes
+    fullEveryMin: 10,         // a full pass at least every 10 minutes, whatever the fast path says / passage complet au moins toutes les 10 minutes
+    maxOpsPerTick: 25,        // Google writes per run (free plan: 50 subrequests per run in total) / ecritures Google par passage
+    maxLookups: 8,            // single-event lookups per run / lectures unitaires par passage
+    planMaxBytes: 950000,     // GitHub reads files over 1 MiB as empty: refuse to write beyond this / GitHub lit vide au-dela de 1 Mio
+  },
+}
+const merge = (a, b) => (b && typeof b === 'object' && !Array.isArray(b) ? Object.fromEntries(Object.keys({ ...a, ...b }).map((k) => [k, k in b ? (a && typeof a[k] === 'object' && !Array.isArray(a[k]) ? merge(a[k], b[k]) : b[k]) : a[k]])) : (b ?? a))
+export function loadParams(env = {}) {
+  let override = {}
+  if (env.PLAN_GCAL_PARAMS) { try { override = JSON.parse(env.PLAN_GCAL_PARAMS) } catch { throw new Error('PLAN_GCAL_PARAMS is not valid JSON') } }
+  const all = merge(DEFAULT_PARAMS, override)
+  return { ...all.mapping, ...all.import, runtime: all.runtime }
+}

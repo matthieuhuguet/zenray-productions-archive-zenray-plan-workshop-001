@@ -1,0 +1,83 @@
+/* T-04-1-1 — révélation cinématique. Tokens RELEVÉS sur les 24 captures DS2 (gameuidatabase).
+
+   ZenRayMedia est un ÉDITEUR, au sens d'Unreal : une scène, des composants qu'on pose dessus, un
+   rendu déterministe. La visée reste celle d'un Photoshop ou d'un DaVinci hyper rapide — on
+   ouvre, on pose, on exporte, sans attendre. Un thème n'est donc pas une feuille de style : c'est
+   un JEU DE PIÈCES posables, et c'est pourquoi chaque composant est un fichier autonome.
+
+   CE QUE CE THÈME DOIT PROUVER, ET POURQUOI IL CHANGE LA MÉTHODE
+   Une interface de jeu n'est pas une page. Trois différences commandent tout le reste :
+
+   1. Il n'y a PAS DE PAPIER. Le fond est une image — un rendu 3D, une photographie, une vidéo.
+      Toute l'interface est donc en surimpression, et sa lisibilité ne vient jamais d'un aplat
+      opaque mais d'un halo, d'un dégradé ou d'un liseré. Conséquence directe : `zrm-palette` ne
+      transfère pas. Mesurée sur ces captures, elle a rendu du brun de peau et de l'orange de
+      décor. Les couleurs d'interface se prélèvent ÉLÉMENT PAR ÉLÉMENT (zrm-pick), jamais en
+      agrégeant la capture.
+
+   2. La typographie porte peu, l'ESPACE porte tout. Le titre de Death Stranding est une
+      graisse fine à 0,42em d'interlettrage : ce n'est pas la police qui fait l'effet, c'est
+      l'écartement. Un thème de presse se rate sur la police ; un thème de jeu se rate sur
+      l'espacement.
+
+   3. Les SIGNES sont la moitié du langage. Glyphes de manette, réticules, jauges, crochets
+      d'angle : sans eux, l'interface n'est plus reconnaissable. Ils se dessinent en SVG, pas en
+      CSS approximé — un crochet d'angle en `border` n'a jamais la bonne épaisseur ni le bon
+      débord.
+
+   COULEURS — prélevées à la source sur les éléments d'interface eux-mêmes :
+     barre de dialogue  #2b699c   (DS2__GUID__05)
+     pastille centrale  #0d476f   (DS2__GUID__05)
+     ligne d'invite     #0a4b75   (DS2__GUID__12)
+   Le blanc du texte est un blanc pur : sur une image, tout blanc cassé se lit comme une salissure. */
+:root{
+  /* Il n'y a pas de « papier » : la scène est une image. Ce fond n'est qu'un repli quand
+     aucune image n'est fournie, et il est presque noir parce que l'interface est conçue pour
+     être posée sur du sombre. */
+  --zrm-scene:    #0b0f14;
+  --zrm-ink:      #ffffff;
+  --zrm-ink-dim:  rgba(255,255,255,.62);
+  --zrm-ink-faint:rgba(255,255,255,.34);
+
+  --zrm-blue:     #2b699c;  /* barre de dialogue, mesurée */
+  --zrm-blue-deep:#0d476f;  /* pastille centrale, mesurée */
+  --zrm-cyan:     #7fd4ff;  /* le halo des lignes d'invite : plus clair que le trait lui-même */
+  --zrm-line:     #0a4b75;  /* trait d'invite, mesuré */
+  --zrm-amber:    #e8a33d;  /* jauges et alertes */
+  --zrm-red:      #d9483c;  /* danger */
+  --zrm-rule:     rgba(255,255,255,.18);
+
+  /* Les voiles. Sur une image, un composant se détache par un DÉGRADÉ, jamais par un aplat :
+     un rectangle opaque sur une scène 3D se lit comme un autocollant. */
+  --zrm-veil:     linear-gradient(180deg, rgba(4,8,12,0) 0%, rgba(4,8,12,.72) 55%, rgba(4,8,12,.92) 100%);
+  --zrm-veil-up:  linear-gradient(0deg, rgba(4,8,12,0) 0%, rgba(4,8,12,.7) 100%);
+  --zrm-glass:    rgba(43,105,156,.42);
+
+  --u: clamp(12px, 1.35vw, 24px);
+  --measure: 54ch;
+
+  /* L'INTERLETTRAGE EST UN TOKEN, au même rang que la taille. C'est la variable qui distingue
+     un titre de jeu d'un titre de presse, et la seule qu'un thème de presse n'a jamais eu à
+     nommer. Mesuré sur le logo DS2 : 0,42em. */
+  --tr-title:   .42em;
+  --tr-label:   .22em;
+  --tr-menu:    .06em;
+
+  --s-title: 2.4em;
+  --s-menu:  1.0em;
+  --s-label: .68em;
+
+  --f-display: 'Barlow', 'Helvetica Neue', system-ui, sans-serif;
+  --f-body:    'Barlow', system-ui, -apple-system, sans-serif;
+  --f-meta:    'Barlow', system-ui, sans-serif;
+  --f-mono:    'JetBrains Mono', ui-monospace, monospace;
+}
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; }
+body{
+  background:var(--zrm-scene); color:var(--zrm-ink);
+  font-family:var(--f-body); font-size:var(--u); line-height:1.5;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+}
+/* PAS DE RÈGLE DE COMPOSANT ICI : le compilateur émet tokens.css AVANT les styles de composant,
+   donc toute règle placée ici serait morte. Elles vivent dans parts/. */

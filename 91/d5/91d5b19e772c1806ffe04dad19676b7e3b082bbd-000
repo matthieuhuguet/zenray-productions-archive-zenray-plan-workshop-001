@@ -1,0 +1,90 @@
+// tick.js (17 October 2026): ONE run of the Plan <-> Google Calendar sync. Everything external is injected (fetch, clock, state store), so tests and the
+// local dry-run harness use the exact code the Worker runs. FR : un passage de la synchronisation, tout l'exterieur est injecte.
+//
+// CPU BUDGET (Cloudflare free plan: 10 ms CPU per run, 50 subrequests per run; network waiting is free). A site Worker was already killed with error 1102
+// on this account (2 October 2026), so the common case must cost almost nothing:
+//   FAST PATH (nothing changed): token + Plan read + "events updated in the last 3 minutes" = 3 subrequests, no board parsing, no reconcile.
+//   FULL PATH (Plan sha changed, a Google event changed, or every `fullEveryMin` minutes): parse, list, reconcile, write.
+import { reconcile } from './core.js'
+import { loadParams } from './params.js'
+import { accessToken, createGoogle, EVENT_FIELDS } from './google.js'
+import { readPlan, parseBoard, savePlan } from './plan.js'
+
+const defaultUid = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}${Math.floor(Math.random() * 1000)}`
+
+async function applyOps(google, calOps) {
+  const failures = []
+  for (let i = 0; i < calOps.length; i += 5) { // chunks of 5 in parallel / paquets de 5 en parallele
+    await Promise.all(calOps.slice(i, i + 5).map(async (op) => {
+      try {
+        if (op.op === 'insert') await google.insert(op.body)
+        else if (op.op === 'patch') await google.patch(op.eventId, op.body)
+        else if (op.op === 'revive') await google.revive(op.eventId, op.body)
+        else if (op.op === 'delete') await google.remove(op.eventId)
+      } catch (error) { failures.push({ op: op.op, eventId: op.eventId, error: String(error.message).slice(0, 200) }) }
+    }))
+  }
+  return failures
+}
+
+export async function tick(env, deps = {}) {
+  const now = deps.now || new Date()
+  const params = loadParams(env), rt = params.runtime
+  const dryRun = deps.dryRun ?? env.DRY_RUN === 'true'
+  const state = deps.state || { get: async () => null, set: async () => {} }
+  const raw = deps.fetchImpl || fetch
+  let subrequests = 0
+  const fetchImpl = (...args) => { subrequests++; return raw(...args) }
+
+  const google = createGoogle({ fetchImpl, token: await accessToken(env, fetchImpl), calendarId: params.calendarId })
+  const plan = await readPlan({ fetchImpl, env, runtime: rt })
+  const prev = await state.get()
+
+  // ---- fast path ----
+  const periodic = now.getUTCMinutes() % rt.fullEveryMin === 0
+  if (!deps.forceFull && !periodic && prev && prev.planSha === plan.sha) {
+    const updated = await google.list({ updatedMin: new Date(now.getTime() - rt.updatedOverlapSec * 1000).toISOString(), showDeleted: true, fields: 'items(id)', maxResults: 5 })
+    if (!(updated.items || []).length) return { mode: 'idle', subrequests }
+  }
+
+  // ---- full path ----
+  const board = parseBoard(plan.markdown)
+  const prevLastRun = board.gcalSync?.lastRun
+  const from = new Date(`${params.importFrom}T00:00:00Z`); from.setUTCDate(from.getUTCDate() - 2)
+  const to = new Date(now.getTime() + rt.futureHorizonDays * 86400000)
+  const events = []
+  let pageToken
+  for (let page = 0; page < 4; page++) {
+    const r = await google.list({ showDeleted: false, orderBy: 'startTime', timeMin: from.toISOString(), timeMax: to.toISOString(), fields: `nextPageToken,items(${EVENT_FIELDS})`, pageToken })
+    events.push(...(r.items || [])); pageToken = r.nextPageToken
+    if (!pageToken) break
+  }
+  if (pageToken) throw new Error('more than 4 pages of events: refusing to decide on a partial list')
+  const have = new Set(events.map((e) => e.id))
+  const missing = board.tasks.filter((t) => t.gcal?.id && !have.has(t.gcal.id)).map((t) => t.gcal.id)
+  const looked = await Promise.all(missing.slice(0, rt.maxLookups).map((id) => google.get(id)))
+  for (const id of missing.slice(rt.maxLookups)) looked.push({ id, status: 'unknown' }) // budget exhausted: decide nothing for those / budget epuise
+  events.push(...looked)
+
+  const { calOps, report } = reconcile(board, events, params, { now, uid: deps.uid || defaultUid }, { inPlace: true })
+  if (calOps.length > rt.maxOpsPerTick) throw new Error(`${calOps.length} Google writes needed, limit ${rt.maxOpsPerTick} per run: run the Mac sync once (PlanGcalSync.mjs --apply) or raise maxOpsPerTick`)
+
+  const summary = { mode: dryRun ? 'dry-run' : 'full', events: events.length, tasks: board.tasks.length, ops: calOps.length, ...report }
+  if (dryRun) return { ...summary, subrequests }
+
+  const failures = await applyOps(google, calOps)
+  if (failures.length) throw new Error('Google operations failed, Plan NOT saved (the next run adopts what already exists): ' + JSON.stringify(failures.slice(0, 5)))
+
+  // The run timestamp alone must never trigger a write (it would commit to GitHub every minute). / l'horodatage seul ne declenche jamais d'ecriture.
+  if (prevLastRun) board.gcalSync.lastRun = prevLastRun
+  const unchanged = JSON.stringify(board) === plan.markdown
+  let planSha = plan.sha
+  if (!unchanged) {
+    board.gcalSync.lastRun = now.toISOString()
+    const saved = await savePlan({ fetchImpl, env, runtime: rt, markdown: JSON.stringify(board), sha: plan.sha })
+    if (saved.conflict) return { ...summary, mode: 'conflict', subrequests } // the Plan changed meanwhile: next run starts over / le Plan a bouge : on recommence
+    planSha = saved.sha
+  }
+  if (!prev || prev.planSha !== planSha) await state.set({ planSha })
+  return { ...summary, saved: !unchanged, subrequests }
+}

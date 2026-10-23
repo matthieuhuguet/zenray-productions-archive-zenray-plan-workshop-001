@@ -1,0 +1,109 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import docHandler from '../../server/doc.js'
+import treeHandler from '../../server/tree.js'
+import {
+  documentRepo,
+  isAllowedDocumentPath,
+  normalizeDocumentPath,
+  visibleDocumentPaths,
+} from '../../server/doc-access-policy.js'
+
+function mockResponse() {
+  return {
+    statusCode: 0,
+    body: null,
+    headers: {},
+    status(code) { this.statusCode = code; return this },
+    json(body) { this.body = body; return this },
+    setHeader(name, value) { this.headers[name] = value },
+  }
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
+})
+
+describe('document access policy', () => {
+  it('accepts only the declared repositories', () => {
+    expect(documentRepo('memory')?.key).toBe('memory')
+    expect(documentRepo('CLAUDE')?.key).toBe('claude')
+    expect(documentRepo('unknown')).toBeNull()
+  })
+
+  it.each([
+    'Identity/Matthieu1.md',
+    'identity%2FMatthieu1.md',
+    'IDENTITY%252FMatthieu1.md',
+    'Notes/Secrets/API.md',
+    'Credentials.md',
+    'Notes/private.md',
+    '../Identity/Matthieu1.md',
+    '/Identity/Matthieu1.md',
+    'Design/Design1.txt',
+  ])('rejects sensitive or invalid path %s', (path) => {
+    expect(isAllowedDocumentPath(path)).toBe(false)
+  })
+
+  it('canonicalizes safe paths without weakening traversal checks', () => {
+    expect(normalizeDocumentPath('Design\\Liquid Glass\\Design1.md')).toBe('Design/Liquid Glass/Design1.md')
+    expect(normalizeDocumentPath('Design//Design1.md')).toBeNull()
+    expect(isAllowedDocumentPath('Design/Liquid Glass/Design1.md')).toBe(true)
+  })
+
+  it('filters sensitive entries from the returned tree', () => {
+    expect(visibleDocumentPaths([
+      { type: 'blob', path: 'Notes/Public.md' },
+      { type: 'blob', path: 'Identity/Matthieu1.md' },
+      { type: 'blob', path: 'Notes/Secrets/API.md' },
+      { type: 'tree', path: 'Folder.md' },
+      { type: 'blob', path: 'Notes/file.txt' },
+    ])).toEqual(['Notes/Public.md'])
+  })
+})
+
+describe('document endpoints enforce the policy before GitHub', () => {
+  it.each(['Identity/Matthieu1.md', 'Identity%252FMatthieu1.md', 'Notes/Secrets/key.md'])('blocks %s without fetching it', async (path) => {
+    vi.stubEnv('GITHUB_TOKEN', 'test-only')
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const res = mockResponse()
+
+    await docHandler({ query: { repo: 'memory', path } }, res)
+
+    expect(res.statusCode).toBe(403)
+    expect(res.body).toEqual({ markdown: null, error: 'forbidden-path' })
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('rejects an undeclared repository without falling back to Memory', async () => {
+    vi.stubEnv('GITHUB_TOKEN', 'test-only')
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const res = mockResponse()
+
+    await docHandler({ query: { repo: 'attacker', path: 'README.md' } }, res)
+
+    expect(res.statusCode).toBe(400)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('filters a GitHub tree response before returning it', async () => {
+    vi.stubEnv('GITHUB_TOKEN', 'test-only')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ tree: [
+        { type: 'blob', path: 'Design/Design1.md' },
+        { type: 'blob', path: 'Identity/Matthieu1.md' },
+        { type: 'blob', path: 'Secrets/token.md' },
+      ] }),
+    }))
+    const res = mockResponse()
+
+    await treeHandler({ query: { repo: 'memory' } }, res)
+
+    expect(res.statusCode).toBe(200)
+    expect(res.body.files).toEqual(['Design/Design1.md'])
+    expect(res.headers['Cache-Control']).toBe('no-store')
+  })
+})

@@ -1,0 +1,4 @@
+/* Jetons du thème, en unités RELATIVES : la densité des formats bornés passe par la taille de
+   police racine, donc toute valeur en pixels durs ne suivrait pas. */
+:root{--sp-bg:#121212;--sp-panel:#181818;--sp-ink:#fff;--sp-muted:#b3b3b3;--sp-accent:#1ed760;
+--sp-radius:.5em;--sp-gap:.6em}

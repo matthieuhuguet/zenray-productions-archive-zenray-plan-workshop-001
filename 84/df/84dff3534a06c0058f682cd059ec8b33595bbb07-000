@@ -1,0 +1,31 @@
+import { describe, expect, it } from 'vitest'
+import { parseGoogleMapsUrl } from '../../src/lib/gmapsLink.js'
+
+describe('parseGoogleMapsUrl host boundary', () => {
+  it.each([
+    'https://google.com.evil.com/maps?q=Tokyo',
+    'https://evil-google.com/maps?q=Tokyo',
+    'https://google.evil/maps?q=Tokyo',
+    'https://maps.app.goo.gl.evil.com/maps?q=Tokyo',
+    'https://example.com/maps/place/Tokyo/@35.0,139.0,15z',
+  ])('rejects lookalike host %s', (url) => {
+    expect(parseGoogleMapsUrl(url)).toBeNull()
+  })
+
+  it.each([
+    'https://google.com/maps?q=Tokyo',
+    'https://www.google.com/maps?q=Tokyo',
+    'https://maps.google.com/maps?q=Tokyo',
+  ])('accepts Google-owned host %s', (url) => {
+    expect(parseGoogleMapsUrl(url)).toEqual({ query: 'Tokyo' })
+  })
+
+  it('extracts place, coordinates and zoom from a canonical Maps URL', () => {
+    expect(parseGoogleMapsUrl('https://www.google.com/maps/place/Tokyo/@35.0,139.0,15z')).toEqual({
+      lat: '35.0',
+      lng: '139.0',
+      zoom: 15,
+      query: 'Tokyo',
+    })
+  })
+})

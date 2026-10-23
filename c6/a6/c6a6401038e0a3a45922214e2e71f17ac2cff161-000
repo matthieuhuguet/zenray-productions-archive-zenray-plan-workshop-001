@@ -1,0 +1,25 @@
+# ZenRay Plan <-> Google Calendar Worker (17 October 2026). Deploy from the repo root:
+#   CLOUDFLARE_ACCOUNT_ID=7b3e813da5c495fe8e3b1ec5a37ce75f npx wrangler deploy --config workers/plan-gcal/wrangler.toml  (the id is needed: without it wrangler may answer "Authentication error")
+# Secrets (set with `wrangler secret bulk`, never in this file): ZR_API_SECRET (the drive code), GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN.
+# FR : secrets a poser avec `wrangler secret bulk`, jamais dans ce fichier.
+name = "zenray-plan-gcal"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false          # no public URL: the Worker only answers its own cron trigger / aucune URL publique
+preview_urls = false
+
+# [triggers]
+# crons = ["* * * * *"]        # disabled: migrated back to Mac local daemon (20 October 2026)
+
+[observability]
+enabled = false
+
+# One key ("state") holding the Plan sha seen at the last successful run. Written only when the sha changes (KV free plan: 1000 writes a day).
+# FR : une seule cle, ecrite seulement quand le sha du Plan change.
+[[kv_namespaces]]
+binding = "STATE"
+id = "d15709b67a674caa98e601cfb2fe9072"
+
+[vars]
+DRY_RUN = "true"            # "true" = reads everything, decides, writes NOTHING.

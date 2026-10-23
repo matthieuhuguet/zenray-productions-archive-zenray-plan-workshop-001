@@ -1,0 +1,22 @@
+# Configuration Cloudflare Pages. Le pendant de vercel.json, préparé le 2026-07-30 et NON DÉPLOYÉ :
+# il attend le jour où l'on bascule, et ce jour-là il ne restera qu'à reporter les variables.
+
+name = "zenray-progress"
+pages_build_output_dir = "dist"
+
+# LA DATE COMPTE AUTANT QUE LE DRAPEAU.
+#
+# `nodejs_compat` donne node:fs, node:crypto, node:path et node:url — ce qui permet aux
+# quarante-quatre handlers de `server/` de tourner sans être réécrits.
+#
+# Et surtout, `nodejs_compat_populate_process_env` peuple `process.env` avec les variables et les
+# secrets du Worker. Il est actif PAR DÉFAUT à partir d'une date de compatibilité au 2025-04-01,
+# et c'est lui qui rend inutile le portage des 112 lectures de `process.env` dans le code. Une date
+# antérieure les casserait toutes en silence : elles rendraient une chaîne vide, et l'application
+# se comporterait comme si aucun jeton n'était configuré.
+compatibility_date = "2025-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Les 38 variables se posent en secrets dans l'interface, ou par `wrangler pages secret put`.
+# Elles ne sont volontairement PAS listées ici : ce fichier est commité, elles ne doivent pas
+# l'être. La liste vit dans docs/HEBERGEMENT-audit-cloudflare.md, sans les valeurs.

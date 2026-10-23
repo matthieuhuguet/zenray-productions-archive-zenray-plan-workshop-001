@@ -1,0 +1,57 @@
+/* T-01-1-5--tabloid-daccroche — tokens RELEVÉS sur les captures THE SUN.
+
+   CE QUE CE THÈME DOIT PROUVER
+   Le tabloïd : la page N'A PAS de hiérarchie douce. Tout crie ou tout se tait. Le rouge #d73520
+   occupe 7 % des blocs plats — quatorze fois plus que l'accent du Figaro — et le titre vaut 2,6
+   fois le corps. C'est l'extrême opposé de T-01-1-4, qui pose son identité sur un fond calme.
+   Deux thèmes de la même sous-famille, aux antipodes.
+
+   POLICES — issues de l'atelier de calibrage, validées à l'oeil par Matthieu le 2026-07-25.
+   Elles font autorité sur la mesure : sur les 8 sondes du lot presse, le détecteur place la
+   bonne réponse en tête 4 fois sur 8 seulement.
+     display / meta  Rajdhani 700 — titre ET navigation dans la même linéale condensée.
+                     La mesure la classait n°4 sur le titre, n°1 sur la navigation.
+     body            Source Sans 3 — le corps d'un tabloïd reste neutre, c'est le titre qui parle
+
+   COULEURS — relevées par scripts/zrm-palette.mjs sur l'ensemble des captures agrégées.
+   Les noms de variables sont ceux de T-01-1-2 : les composants hérités s'en servent, les
+   renommer casserait tout sans rien apprendre. Seules les VALEURS changent. */
+:root{
+  --zrm-ink:      #0a0a0a;
+  --zrm-paper:    #ffffff;
+  --zrm-wash:     #eaeeef;
+  --zrm-band:     #d73520;  /* LE ROUGE. 7 % des blocs plats, bandeau-titre et navigation. */
+  --zrm-chip:     #d73520;
+  --zrm-red:      #d73520;
+  --zrm-red-deep: #a8281a;
+  --zrm-rule:     #cbcbd3;
+  --zrm-meta:     #8c969d;
+  --zrm-sub:      #f5c518;
+  --zrm-blue:     #1a326d;
+  --zrm-night:    #1c1c1c;  /* les blocs sombres du Sun ne sont pas noirs mais gris très foncé */
+  --zrm-yellow:   #f5c518;
+  --zrm-olive:    #7c9cc1;
+
+  --u: clamp(12px, 1.7vw, 28px);
+  --measure: 58ch;
+
+  --s-title: 2.6em;
+  --s-lead:  1.24em;
+  --s-card:  1.06em;
+  --s-meta:  0.74em;
+
+  --f-display: 'Rajdhani', 'Arial Narrow', Impact, sans-serif;
+  --f-body:    'Source Sans 3', system-ui, -apple-system, sans-serif;
+  --f-meta:    'Rajdhani', 'Arial Narrow', Impact, sans-serif;
+}
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; }
+body{
+  background:var(--zrm-paper); color:var(--zrm-ink);
+  font-family:var(--f-body); font-size:var(--u); line-height:1.45;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+}
+/* PAS DE RÈGLE DE COMPOSANT ICI. Le compilateur émet tokens.css AVANT les styles de composant :
+   à spécificité égale le composant gagne toujours, donc toute règle placée ici serait morte et
+   ferait croire à une correction qui n'a pas lieu. Les graisses, surtitres et bandeaux-titres
+   vivent dans parts/, qui est aussi l'endroit où vit la mesure qui les justifie. */

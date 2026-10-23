@@ -1,0 +1,19 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  // 2 October 2026, 12:51: Serve the editable workspace with the existing loopback API.
+  server: {
+    host: '127.0.0.1',
+    port: 5199,
+    strictPort: true,
+    proxy: { '/api': { target: 'http://127.0.0.1:3100', changeOrigin: false } },
+  },
+  build: { target: 'esnext' },
+  // ffmpeg.wasm : ne pas pré-bundler @ffmpeg/ffmpeg. Vite sert alors classes.js tel quel, donc son
+  // import.meta.url pointe vers le vrai fichier et `new URL('./worker.js', import.meta.url)` (worker ESM
+  // interne) se résout. On NE passe PAS classWorkerURL (cf. ffmpegCore.js) : le worker ESM charge le core
+  // ESM via import(). NE PAS forcer worker.format:'es', NE PAS pré-bundler.
+  optimizeDeps: { exclude: ['@ffmpeg/ffmpeg', '@ffmpeg/util', 'jassub'] },
+})

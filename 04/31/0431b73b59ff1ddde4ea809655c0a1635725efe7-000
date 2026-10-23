@@ -1,0 +1,40 @@
+import { describe, expect, it } from 'vitest'
+import { safeMarkedParse } from '../../src/safeMarked.js'
+
+describe('safeMarkedParse', () => {
+  it('renders raw HTML as text rather than executable markup', () => {
+    const html = safeMarkedParse('<img src=x onerror=alert(1)>')
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;')
+    expect(html).not.toContain('<img src=x')
+  })
+
+  it.each([
+    '[x](javascript:alert(1))',
+    '[x](JaVaScRiPt:alert(1))',
+    '[x](java&#x73;cript:alert(1))',
+    '[x](javascript&#58;alert(1))',
+    '[x](java%73cript%3Aalert(1))',
+    '[x](data:text/html,x)',
+    '[x](vbscript:msgbox(1))',
+    '![x](javascript:alert(1))',
+    '![x](data:image/svg+xml,x)',
+  ])('removes dangerous URL attributes from %s', (markdown) => {
+    const html = safeMarkedParse(markdown)
+    expect(html).not.toMatch(/(?:href|src)="(?:javascript|data|vbscript):/i)
+  })
+
+  it.each([
+    ['[web](https://example.com/a%20b?x=1&y=2)', 'href="https://example.com/a%20b?x=1&amp;y=2"'],
+    ['[mail](mailto:a@example.com)', 'href="mailto:a@example.com"'],
+    ['[relative](../notes/page)', 'href="../notes/page"'],
+    ['[root](/notes/page)', 'href="/notes/page"'],
+    ['[anchor](#section)', 'href="#section"'],
+    ['![image](/images/a%20b.png)', 'src="/images/a%20b.png"'],
+  ])('keeps approved URL %s', (markdown, expected) => {
+    expect(safeMarkedParse(markdown)).toContain(expected)
+  })
+
+  it('does not allow mailto as an image source', () => {
+    expect(safeMarkedParse('![x](mailto:a@example.com)')).not.toContain('<img')
+  })
+})

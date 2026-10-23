@@ -1,0 +1,96 @@
+# TODO — reconstruit le 2026-07-17 sur demande explicite de Matthieu
+
+Retour Matthieu : « note en attente toutes les modifications que je t'ai déjà dit mais qui n'ont pas encore
+eu lieu à cause de ce manque de rigueur de ta part — reprends tous les prompts en mémoire et note sous
+forme de liste ». Liste reconstruite en relisant l'intégralité des demandes de cette session (y compris la
+partie résumée avant compaction). Statut honnête par item, pas de zone grise.
+
+Légende : ✅ FAIT (build+test+navigateur vérifiés) · 🟡 EN ATTENTE DE VALIDATION (codé mais Matthieu n'a pas
+validé le rendu) · ❌ PAS FAIT (annulé, interrompu, ou jamais commencé) · 🚫 REFUSÉ (règle de sécurité, pas
+un oubli) · ❓ STATUT INCERTAIN (demandé tôt dans la session, jamais reconfirmé après le pivot ZenRay Audio)
+
+---
+
+## Bloqué / en attente de Matthieu (rien ne doit avancer dessus sans son feu vert)
+
+- 🟡 **Liquid Glass — boutons du lecteur vidéo (image 3 / RefPlayer.png / RefPlayer2.jpeg).** Recette
+  frosted (fill clair + désaturation/éclaircissement au lieu de saturation) + rim Fresnel (conic-gradient,
+  brillant haut/bas, transparent côtés) construits et testés isolément dans
+  `Memory/Design/ReusableComponentsButtons/glass-math-test.html` + `liquid-glass-video-controls.html`.
+  **Matthieu a explicitement dit d'attendre sa validation avant de toucher au vrai lecteur.** Dernier
+  retour : la première version du rim « fait cheap », une version adoucie a été posée dans le fichier de
+  test mais PAS encore validée. Retour majeur reçu en cours de route : la réflexion physique réelle relève
+  du moteur de rendu GPU, pas du CSS — Matthieu a dit que ce n'est PAS une priorité, mais veut quand même
+  une reproduction fidèle du VISUEL des deux images de référence. Prochaine étape : proposer une nouvelle
+  itération du mockup isolé, attendre validation explicite, PUIS SEULEMENT intégrer au vrai `PlayerBar.jsx`.
+- 🟡 **Généraliser le rim Fresnel aux formes non-circulaires** (carrés, rectangles, capsules/pills, boutons
+  ronds) — retour explicite de Matthieu : « il manque aussi les boîtes carrées / rectangle / capsule ».
+  Noté comme ouvert dans `Design1.md` (2026-07-17), pas encore construit ni vérifié à l'œil.
+- 🟡 **`PlayerBar.jsx` (le vrai lecteur minimisé, capsule bas-gauche)** a déjà reçu une PREMIÈRE version du
+  rim Fresnel (avant le retour « c'est hideux ») — ce code est actuellement EN PLACE dans le fichier réel,
+  ni retiré ni corrigé, dans l'attente d'une décision de Matthieu (revenir en arrière ou attendre la version
+  validée du mockup pour l'appliquer directement). **Ne pas retoucher ce fichier sans validation explicite.**
+
+## Pas fait / annulé (à refaire)
+
+- ❌ **Recherche multi-source : flèche bas pour développer chaque groupe (YouTube/Spotify/local) jusqu'à 6
+  résultats + flèches gauche/droite pour paginer les résultats suivants.** Un agent avait été lancé en
+  arrière-plan pour ce travail (`aaf3a6233e9c21f8d`) puis **annulé/interrompu avant d'avoir terminé** —
+  confirmé : « treat its work as cancelled ». Rien n'est garanti fonctionnel. À refaire (probablement en
+  direct, sans agent, sauf si Matthieu redemande explicitement un agent).
+  - Pré-requis déjà identifiés pour cette tâche : lever le cap `.slice(0,2)` sur `localMatches`
+    (`ZenRayAudioPanel.jsx`) et le cap `.slice(0,8)` côté YouTube (`server/youtube-search.js`, doit passer à
+    20 pour avoir de quoi paginer) ; Spotify a déjà 20 résultats disponibles sans changement serveur.
+
+## Fait et vérifié (build vert + tests verts + navigateur réel)
+
+- ✅ Renommage complet Music → ZenRay Audio (composants, breadcrumb, dossier).
+- ✅ Un seul lecteur global visible (fix règle CSS `body.zr-music-open .zr-global-player{display:none}`
+  perdue lors du split vers `ZenRayAudioWorkspace.css`).
+- ✅ Thème clair/sombre réel branché sur `ZenRayAudioWorkspace` (prop `t` qui n'était pas transmise).
+- ✅ Clic simple sur une piste lance la lecture immédiatement (au lieu du double-clic uniquement).
+- ✅ Bouton « Créer » de la bibliothèque pose une playlist vide au lieu d'ouvrir le menu d'import.
+- ✅ Glisser-déposer de fichiers audio (test réel `fireEvent` ajouté, vrai drag OS non simulable par les
+  outils de vérification navigateur disponibles ici).
+- ✅ Recherche Spotify SANS login : découverte que la recherche utilisait par erreur le token OAuth
+  personnel au lieu du Client ID/Secret fournis par Matthieu — corrigé via nouvelle route serveur
+  `server/spotify-search.js` (grant Client Credentials).
+- ✅ Recherche YouTube SANS clé Google Cloud : `server/youtube-search.js`, endpoint innertube public
+  (le même que youtube.com utilise pour son propre lecteur web), aucune inscription requise.
+- ✅ Popup de recherche repensé : ancré sous la barre (pas une section pleine largeur), 3 groupes
+  YouTube/Spotify/Fichiers locaux, plafonnés à 2 résultats chacun par défaut.
+- ✅ Icônes SF Symbols réelles pour `gobackward`/`goforward` (Icon.jsx) : l'ancienne version dessinée à la
+  main était cassée — remplacée par l'export Apple CoreSVG réel fourni par Matthieu, `goforward` dérivé par
+  miroir horizontal exact (le chiffre « 10 » reste à l'endroit).
+- ✅ Déploiement Vercel production effectué une fois, avec tout ce qui précède SAUF les items encore
+  🟡/❌ ci-dessus (survenus après ce déploiement) — **un nouveau déploiement sera nécessaire une fois les
+  items en attente terminés et validés.**
+
+## Statut incertain — demandé tôt dans la session, avant le pivot ZenRay Audio, jamais reconfirmé depuis
+
+Ces demandes datent d'avant le gros pivot « recrée toute l'app ZenRay Audio » et n'ont plus été mentionnées
+depuis. Il n'existe pas de trace explicite de vérification pour elles dans cette session — à re-vérifier
+avant de les considérer closes plutôt que de supposer qu'elles le sont.
+
+- ❓ Vue Skills : passage à 2 colonnes pleine largeur (fix bug 3 colonnes + espace vide) + masquage du
+  bouton « ... » sur les cartes.
+- ❓ Icône SF Symbol réelle (`gear.svg` fourni par Matthieu) appliquée aux cartes de skills, avec le nom
+  à retenir pour les futures mises à jour d'icône.
+- ❓ Réindexation complète pour lire TOUT le dossier Memory en live (pas seulement Create/Skills), avec
+  fil d'Ariane remontant jusqu'à Memory.
+- ❓ Fix crash Drive « famOf is not defined » (erreur runtime signalée par capture d'écran).
+
+## Refusé (pas un oubli — règle de sécurité, ne sera jamais fait par moi)
+
+- 🚫 Se connecter à Spotify avec l'email/mot de passe réel de Matthieu pour tester l'ajout d'un résultat de
+  recherche. Règle absolue : jamais de mot de passe saisi dans un champ, quelle que soit la demande. Si
+  Matthieu veut ce test fait, il doit se connecter lui-même dans l'onglet ouvert — la session OAuth persiste
+  ensuite et je peux tester le reste sans jamais voir le mot de passe.
+- 🚫 Stockage du mot de passe Spotify dans un fichier (« Memory/Creditentials » ou ailleurs), même dans le
+  repo Memory privé. Un mot de passe de compte personnel n'est pas un identifiant API scopé/révocable —
+  catégorie différente des secrets déjà stockés dans `Identity/Matthieu1.md`.
+
+---
+
+*Ce fichier est un instantané de rigueur, pas un journal chronologique — contrairement à `PROGRESS.md`, il
+peut être réécrit/mis à jour librement au fur et à mesure que les items changent de statut.*

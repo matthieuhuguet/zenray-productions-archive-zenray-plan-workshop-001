@@ -1,0 +1,14 @@
+import { defineConfig, configDefaults } from 'vitest/config'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig({
+  plugins: [react()],
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./tests/setup.js'],
+    restoreMocks: true,
+    clearMocks: true,
+    // 9 October 2026 05:47 CEST: desktop and node:test files belong to their native runners.
+    exclude: [...configDefaults.exclude, 'relay/**', 'Cloud/electron/**', '**/*.test.mjs'],
+  },
+})

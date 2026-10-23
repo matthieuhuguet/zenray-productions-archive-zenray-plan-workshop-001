@@ -1,0 +1,16 @@
+// run-local.mjs (17 October 2026): runs the EXACT Worker code (src/tick.js) from the Mac against the real site API and the real Google Calendar.
+// Default is a dry run (nothing written). `--apply` writes (use it for the one-off hash migration, with the Mac sync agent stopped). `--full` skips the fast path.
+// Secrets: Google ones come from the macOS keychain; the drive code from the environment variable ZR_API_SECRET (never a file, never an argument).
+// Usage: ZR_API_SECRET=<drive code> node workers/plan-gcal/scripts/run-local.mjs [--apply] [--full]
+// FR : execute le code exact du Worker depuis le Mac, contre le vrai site et le vrai Google. Essai a blanc par defaut.
+import { execFileSync } from 'node:child_process'
+import { tick } from '../src/tick.js'
+
+const apply = process.argv.includes('--apply'), full = process.argv.includes('--full')
+const k = (service) => execFileSync('security', ['find-generic-password', '-a', 'zenray', '-s', service, '-w'], { encoding: 'utf8' }).trim()
+if (!process.env.ZR_API_SECRET) { console.error('ZR_API_SECRET is required'); process.exit(2) }
+const env = { ZR_API_SECRET: process.env.ZR_API_SECRET, GOOGLE_CLIENT_ID: k('zenray-gcal-client-id'), GOOGLE_CLIENT_SECRET: k('zenray-gcal-client-secret'), GOOGLE_REFRESH_TOKEN: k('zenray-gcal-refresh-token'), DRY_RUN: apply ? 'false' : 'true' }
+const t0 = process.cpuUsage(), w0 = performance.now()
+const summary = await tick(env, { forceFull: full, state: { get: async () => null, set: async () => {} } })
+const cpu = process.cpuUsage(t0)
+console.log(JSON.stringify({ ...summary, localCpuMs: Math.round((cpu.user + cpu.system) / 1000), wallMs: Math.round(performance.now() - w0) }, null, 2))

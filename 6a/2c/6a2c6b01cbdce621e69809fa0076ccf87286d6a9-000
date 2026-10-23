@@ -1,0 +1,138 @@
+// tick.test.js (17 October 2026): one full Worker run against a MOCK of Google and of the site's /api/page. Nothing touches the network.
+// Checks the behaviours that matter on Cloudflare: subrequest budget (50), fast path cost, no write on dry run, no Plan write when Google fails,
+// no Plan write for a timestamp alone, conflict handling, and that every site call carries the auth header.
+// FR : un passage complet contre un faux Google et un faux /api/page ; budget de sous-requetes, chemin rapide, aucune ecriture en essai a blanc.
+import { test, expect } from 'vitest'
+import { tick } from '../src/tick.js'
+import { eventIdFor } from '../src/core.js'
+
+const ENV = { ZR_API_SECRET: 'drive-code', GOOGLE_CLIENT_ID: 'cid', GOOGLE_CLIENT_SECRET: 'csec', GOOGLE_REFRESH_TOKEN: 'rtok', DRY_RUN: 'false' }
+const NOW = new Date('2026-10-17T21:03:00Z') // minute 3: not a periodic full pass / minute 3 : pas un passage complet periodique
+const task = (o = {}) => ({ id: 't1', title: 'Sport', date: '2026-10-20', startTime: '17:00', durationMin: 60, status: 'planned', note: '', ...o })
+const boardOf = (...tasks) => ({ type: 'plan', v: 1, title: 'P', tasks })
+
+// Mock world: a Plan file (text + sha), a list of Google events, and a log of every request.
+function world({ board, events = [], googleFail = false, saveConflict = false, updatedItems = [] }) {
+  const w = { markdown: JSON.stringify(board), sha: 'sha1', events: structuredClone(events), log: [], saves: [], writes: [], updatedItems }
+  w.fetch = async (url, init = {}) => {
+    const u = new URL(url); const method = init.method || 'GET'; w.log.push({ method, host: u.host, path: u.pathname, search: u.search, headers: init.headers || {} })
+    const json = (obj, status = 200) => new Response(JSON.stringify(obj), { status })
+    if (u.host === 'oauth2.googleapis.com') return json({ access_token: 'atok', expires_in: 3600 })
+    if (u.host === 'zenray-progress.pages.dev' && u.pathname === '/api/page' && method === 'GET') return json({ markdown: w.markdown, sha: w.sha })
+    if (u.host === 'zenray-progress.pages.dev' && u.pathname === '/api/page' && method === 'POST') {
+      const body = JSON.parse(init.body); w.saves.push(body)
+      if (saveConflict) return json({ conflict: true, sha: 'newer' })
+      w.markdown = body.markdown; w.sha = 'sha' + (w.saves.length + 1); return json({ ok: true, sha: w.sha })
+    }
+    if (u.host === 'www.googleapis.com') {
+      if (method === 'GET' && u.pathname.endsWith('/events')) {
+        if (u.searchParams.get('updatedMin')) return json({ items: w.updatedItems })
+        return json({ items: w.events })
+      }
+      if (method === 'GET') { const id = decodeURIComponent(u.pathname.split('/').pop()); const e = w.events.find((x) => x.id === id); return e ? json(e) : json({}, 404) }
+      if (googleFail) return json({ error: 'boom' }, 403)
+      w.writes.push({ method, path: u.pathname, body: init.body ? JSON.parse(init.body) : null })
+      if (method === 'POST') { const b = JSON.parse(init.body); w.events.push({ ...b, status: 'confirmed', organizer: { self: true }, start: b.start.dateTime ? { dateTime: b.start.dateTime + '+02:00' } : b.start, end: b.end.dateTime ? { dateTime: b.end.dateTime + '+02:00' } : b.end }); return json({ id: b.id }) }
+      return method === 'DELETE' ? new Response(null, { status: 204 }) : json({})
+    }
+    throw new Error('unexpected request ' + url)
+  }
+  return w
+}
+const run = (w, deps = {}) => tick(ENV, { fetchImpl: w.fetch, now: NOW, uid: (() => { let k = 0; return () => `imp${++k}` })(), ...deps })
+const memState = (initial = null) => { const s = { value: initial, sets: 0, get: async () => s.value, set: async (v) => { s.value = v; s.sets++ } }; return s }
+
+test('first run: Plan task becomes a Google event, Plan saved with the link, state remembers the sha', async () => {
+  const w = world({ board: boardOf(task()) }); const state = memState()
+  const r = await run(w, { state })
+  expect(r.mode).toBe('full'); expect(r.saved).toBe(true)
+  expect(w.writes.map((x) => x.method)).toEqual(['POST']); expect(w.writes[0].body.id).toBe(eventIdFor('t1'))
+  const saved = JSON.parse(w.saves[0].markdown); expect(saved.tasks[0].gcal.id).toBe(eventIdFor('t1')); expect(saved.gcalSync.links[eventIdFor('t1')].taskId).toBe('t1')
+  expect(w.saves[0].sha).toBe('sha1'); expect(state.value.planSha).toBe(w.sha)
+})
+
+test('second run with nothing changed: FAST PATH, exactly 3 subrequests, no parsing of the board, no write', async () => {
+  const w = world({ board: boardOf(task()) }); const state = memState()
+  await run(w, { state }); const before = w.log.length; const writesBefore = w.writes.length, savesBefore = w.saves.length
+  const r = await run(w, { state })
+  expect(r.mode).toBe('idle'); expect(r.subrequests).toBe(3); expect(w.log.length - before).toBe(3)
+  expect(w.writes.length).toBe(writesBefore); expect(w.saves.length).toBe(savesBefore)
+})
+
+test('fast path is NOT taken when Google reports a recent change; the change is picked up', async () => {
+  const w = world({ board: boardOf(task()) }); const state = memState()
+  await run(w, { state })
+  w.events.push({ id: 'phone1', status: 'confirmed', summary: 'Depuis le telephone', start: { dateTime: '2026-10-22T14:00:00+02:00' }, end: { dateTime: '2026-10-22T15:00:00+02:00' }, organizer: { self: true } })
+  w.updatedItems = [{ id: 'phone1' }]
+  const r = await run(w, { state })
+  expect(r.mode).toBe('full'); expect(r.imported).toBe(1)
+  const saved = JSON.parse(w.markdown); expect(saved.tasks.some((t) => t.title === 'Depuis le telephone' && t.startTime === '14:00')).toBe(true)
+})
+
+test('a Plan edit (new sha) triggers a full pass and one Google patch', async () => {
+  const w = world({ board: boardOf(task()) }); const state = memState()
+  await run(w, { state })
+  const b = JSON.parse(w.markdown); b.tasks[0].startTime = '18:30'; w.markdown = JSON.stringify(b); w.sha = 'edited'
+  const r = await run(w, { state })
+  expect(r.mode).toBe('full'); const patches = w.writes.filter((x) => x.method === 'PATCH'); expect(patches.length).toBe(1); expect(patches[0].body.start.dateTime).toBe('2026-10-20T18:30:00')
+})
+
+test('after a full pass with no change, the timestamp alone does NOT write the Plan', async () => {
+  const w = world({ board: boardOf(task()) }); await run(w, { state: memState() })
+  const savesBefore = w.saves.length
+  const r = await run(w, { forceFull: true, state: memState({ planSha: w.sha }) })
+  expect(r.mode).toBe('full'); expect(r.saved).toBe(false); expect(w.saves.length).toBe(savesBefore)
+})
+
+test('periodic full pass: minute 10 of the hour always does the full path even if nothing seems to have changed', async () => {
+  const w = world({ board: boardOf(task()) }); const state = memState(); await run(w, { state })
+  const r = await run(w, { state, now: new Date('2026-10-17T21:10:00Z') }); expect(r.mode).toBe('full')
+})
+
+test('DRY RUN: reads and decides, writes nothing to Google or to the Plan, state untouched', async () => {
+  const w = world({ board: boardOf(task()) }); const state = memState()
+  const r = await tick({ ...ENV, DRY_RUN: 'true' }, { fetchImpl: w.fetch, now: NOW, state })
+  expect(r.mode).toBe('dry-run'); expect(r.ops).toBe(1); expect(w.writes.length).toBe(0); expect(w.saves.length).toBe(0); expect(state.sets).toBe(0)
+})
+
+test('a Google failure aborts BEFORE the Plan is saved (nothing is claimed that did not happen)', async () => {
+  const w = world({ board: boardOf(task()), googleFail: true })
+  await expect(run(w)).rejects.toThrow(/Plan NOT saved/); expect(w.saves.length).toBe(0)
+})
+
+test('a save conflict leaves the Plan alone and does not update the state (next run starts over)', async () => {
+  const w = world({ board: boardOf(task()), saveConflict: true }); const state = memState()
+  const r = await run(w, { state }); expect(r.mode).toBe('conflict'); expect(state.sets).toBe(0)
+})
+
+test('more Google writes than the per-run limit: refuses before writing anything', async () => {
+  const many = Array.from({ length: 30 }, (_, i) => task({ id: `m${i}`, date: `2026-10-${10 + (i % 15)}` }))
+  const w = world({ board: boardOf(...many) })
+  await expect(run(w)).rejects.toThrow(/limit 25/); expect(w.writes.length).toBe(0)
+})
+
+test('worst realistic full pass stays far below the 50 subrequest cap', async () => {
+  const many = Array.from({ length: 20 }, (_, i) => task({ id: `m${i}`, date: `2026-10-${10 + (i % 15)}` }))
+  const w = world({ board: boardOf(...many) })
+  const r = await run(w); expect(r.subrequests).toBeLessThanOrEqual(30)
+})
+
+test('every call to the site carries the drive code in x-zr-auth; Google calls carry the bearer token; no secret ever appears in a URL', async () => {
+  const w = world({ board: boardOf(task()) }); await run(w)
+  for (const c of w.log.filter((x) => x.host === 'zenray-progress.pages.dev')) expect(c.headers['x-zr-auth']).toBe('drive-code')
+  for (const c of w.log.filter((x) => x.host === 'www.googleapis.com')) expect(c.headers.authorization).toBe('Bearer atok')
+  for (const c of w.log) { expect(c.search).not.toContain('drive-code'); expect(c.search).not.toContain('atok') }
+})
+
+test('a Plan read that fails is never treated as an empty Plan', async () => {
+  const w = world({ board: boardOf(task()) }); const f = w.fetch
+  w.fetch = async (url, init) => (String(url).includes('/api/page') && !(init && init.method) ? new Response('oops', { status: 503 }) : f(url, init))
+  await expect(run(w)).rejects.toThrow(/Plan read failed/); expect(w.writes.length).toBe(0); expect(w.saves.length).toBe(0)
+})
+
+test('linked event missing from the list is looked up one by one; beyond the budget it is left alone', async () => {
+  const tasks = Array.from({ length: 12 }, (_, i) => task({ id: `x${i}`, date: `2026-10-${12 + i}`, gcal: { id: `ev${i}`, hash: 'h0', origin: 'gcal' } }))
+  const w = world({ board: boardOf(...tasks) })
+  const r = await run(w, { forceFull: true })
+  expect(r.droppedFromCalendar).toBe(8); expect(r.subrequests).toBeLessThanOrEqual(8 + 6)
+})

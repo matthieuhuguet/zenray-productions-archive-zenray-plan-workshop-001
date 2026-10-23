@@ -1,0 +1,225 @@
+// core.js (17 October 2026, Worker version): PURE reconciliation between a ZenRayPlan board and Google Calendar events. No network, no clock, no randomness
+// (they are injected), so every rule is testable. FR : reconciliation PURE entre le Plan et les evenements Google Calendar ; reseau, horloge et
+// hasard sont injectes, donc chaque regle se teste.
+//
+// Model / Modele. Each task carries `gcal: { id, hash, origin, deleted? }`:
+//   id      Google event id. origin 'plan': deterministic eventIdFor(task.id). origin 'gcal': the id of the imported event.
+//   hash    fingerprint of the CANONICAL content (title, date, start, duration) as of the last sync, shared by both sides.
+//   origin  who created it ('plan' tasks get marks and descriptions pushed; 'gcal' tasks only get their canonical fields pushed).
+// Change detection compares both sides to `hash`: only Plan changed -> push; only Calendar changed -> pull; both -> the Plan wins (reported).
+// FR : on compare chaque cote au hash de la derniere synchronisation : seul le Plan a change -> envoi ; seul l'agenda -> reprise ; les deux -> le Plan gagne.
+import crypto from 'node:crypto'
+import { calendarDescription } from '../../../src/create/planAttachments.js'
+
+export const MARKS = ['✓', '✦', '✕']
+const MARK_RE = /^(?:[✓✦✕]\s*)+/
+
+export const sha = (text, algo = 'sha1') => crypto.createHash(algo).update(text).digest('hex')
+// CHEAP HASH (cyrb53, 14 hex chars, prefix 'h'). The Mac version stored 12-hex sha1 hashes; `hashMatches` still understands them so the first run
+// can migrate every task without treating it as changed. A Worker has 10 ms of CPU on the free plan: 1000 sha1 cost 3 ms, cyrb53 costs about 0.1 ms.
+// FR : hachage bon marche ; les anciens hachages sha1 (12 hex) restent compris pour migrer sans rien considerer comme modifie.
+function cyrb53(str) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57
+  for (let i = 0; i < str.length; i++) { const ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677) }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0)
+}
+// join() instead of JSON.stringify(): same information (null reads as empty), half the cost. Legacy sha1 hashes keep JSON.stringify. / join au lieu de stringify.
+export const hashCanon = (canon) => 'h' + cyrb53(canon.join('\u0001')).toString(16).padStart(14, '0')
+export const legacyHashCanon = (canon) => sha(JSON.stringify(canon)).slice(0, 12)
+export const hashMatches = (stored, canon) => (String(stored).startsWith('h') ? stored === hashCanon(canon) : stored === legacyHashCanon(canon))
+// Google event ids: base32hex (a-v, 0-9), 5..1024 chars. 'plan' + 32 hex chars is valid. / ids Google : a-v et 0-9.
+export const eventIdFor = (taskId) => 'plan' + sha(String(taskId), 'sha256').slice(0, 32)
+export const stripMarks = (title) => String(title || '').replace(MARK_RE, '').trim()
+
+const FORMATTERS = new Map()
+// Building an Intl.DateTimeFormat costs about 75 microseconds; formatting costs 3. One formatter per time zone, built once. / un formateur par fuseau.
+const formatterFor = (tz) => {
+  if (!FORMATTERS.has(tz)) FORMATTERS.set(tz, new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }))
+  return FORMATTERS.get(tz)
+}
+// EUROPE/PARIS WITHOUT Intl (17 October 2026). The first Intl.DateTimeFormat of a run costs about 10 ms (ICU data) and each formatToParts about 9 microseconds:
+// the whole free-plan budget. European summer time is a fixed rule (since 1996): +02:00 from the last Sunday of March 01:00 UTC to the last Sunday of October
+// 01:00 UTC, +01:00 otherwise. Any other time zone still goes through Intl. A test compares both methods on thousands of instants, DST boundaries included.
+// FR : l'heure d'ete europeenne est une regle fixe ; Paris se calcule sans Intl, les autres fuseaux passent par Intl.
+const lastSundayUtcDay = (year, monthIndex) => { const d = new Date(Date.UTC(year, monthIndex + 1, 0)); return d.getUTCDate() - d.getUTCDay() }
+export function parisOffsetMinutes(ms) {
+  const year = new Date(ms).getUTCFullYear()
+  return ms >= Date.UTC(year, 2, lastSundayUtcDay(year, 2), 1) && ms < Date.UTC(year, 9, lastSundayUtcDay(year, 9), 1) ? 120 : 60
+}
+export function localParts(iso, tz) {
+  if (tz === 'Europe/Paris') {
+    const ms = Date.parse(iso)
+    const shifted = new Date(ms + parisOffsetMinutes(ms) * 60000).toISOString()
+    return { date: shifted.slice(0, 10), time: shifted.slice(11, 16) }
+  }
+  const parts = Object.fromEntries(formatterFor(tz).formatToParts(new Date(iso)).filter((p) => p.type !== 'literal').map((p) => [p.type, p.value]))
+  return { date: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` }
+}
+const pad = (n) => String(n).padStart(2, '0')
+const addMinutesLocal = (date, time, minutes) => { // wall-clock arithmetic / arithmetique d'horloge murale
+  const d = new Date(`${date}T${time}:00Z`); d.setUTCMinutes(d.getUTCMinutes() + minutes)
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:00`
+}
+const addDays = (date, n) => { const d = new Date(`${date}T00:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
+const daysBetween = (a, b) => Math.round((new Date(`${b}T00:00:00Z`) - new Date(`${a}T00:00:00Z`)) / 86400000)
+
+export const isAllDay = (event) => Boolean(event.start && event.start.date && !event.start.dateTime)
+export const eventDate = (event, tz) => (isAllDay(event) ? event.start.date : localParts(event.start.dateTime, tz).date)
+
+export function taskDurationMin(task, params) {
+  return Number(task.durationMin || params.defaultDurationMin)
+}
+
+export function canonOfTask(task, params) {
+  const timed = Boolean(task.startTime)
+  return [stripMarks(task.title), task.date, timed ? task.startTime : null, timed ? taskDurationMin(task, params) : null]
+}
+export function canonOfEvent(event, params) {
+  const title = stripMarks(event.summary || '(sans titre)')
+  if (isAllDay(event)) return [title, event.start.date, null, null]
+  const start = localParts(event.start.dateTime, params.timeZone)
+  const minutes = Math.max(5, Math.round((new Date(event.end.dateTime) - new Date(event.start.dateTime)) / 60000))
+  return [title, start.date, start.time, minutes]
+}
+const sameCanon = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+
+export function summaryFor(task, params, origin) {
+  if (origin !== 'plan') return task.title
+  const done = task.status === 'done' || task.status === 'late-complete'
+  return (done ? params.marks.done + ' ' : '') + (task.publish ? params.marks.publish + ' ' : '') + stripMarks(task.title)
+}
+
+// Google resource fragment for a task. `spanDays` keeps the length of an imported multi-day all-day event. / fragment de ressource Google.
+export function timeBody(task, params, spanDays = 1) {
+  if (!task.startTime) return { start: { date: task.date }, end: { date: addDays(task.date, Math.max(1, spanDays)) } }
+  const minutes = taskDurationMin(task, params)
+  return { start: { dateTime: `${task.date}T${task.startTime}:00`, timeZone: params.timeZone }, end: { dateTime: addMinutesLocal(task.date, task.startTime, minutes), timeZone: params.timeZone } }
+}
+export function insertBody(task, params) {
+  const planned = task.status !== 'done' && task.status !== 'late-complete'
+  return {
+    id: eventIdFor(task.id), summary: summaryFor(task, params, 'plan'), ...(calendarDescription(task) ? { description: calendarDescription(task) } : {}), ...timeBody(task, params),
+    ...(params.publishColorId && task.publish ? { colorId: params.publishColorId } : {}),
+    reminders: { useDefault: false, overrides: planned && params.reminderMin && task.startTime ? [{ method: 'popup', minutes: params.reminderMin }] : [] },
+    extendedProperties: { private: { zrSource: 'zenray-plan', zrPlanTaskId: String(task.id) } },
+  }
+}
+
+function taskFromEvent(event, params, ctx) {
+  const [title, date, startTime, durationMin] = canonOfEvent(event, params)
+  const past = date < ctx.today
+  return {
+    id: ctx.uid(), title, date, startTime, durationMin, status: past ? params.importPastStatus : 'planned', note: (event.description || '').slice(0, params.maxNoteChars),
+    images: [], overdueSince: null, doneAt: past && params.importPastStatus === 'done' ? (event.end?.dateTime || `${date}T12:00:00Z`) : null,
+    createdAt: ctx.nowIso, source: 'gcal', gcal: { id: event.id, hash: hashCanon([title, date, startTime, durationMin]), origin: 'gcal' },
+  }
+}
+
+// reconcile(board, events, params, ctx) -> { board, calOps, report }
+//   events: every Google event the caller could see (listed window + looked-up linked ids), including `status:'cancelled'` for missing ones.
+//   ctx: { now: Date, uid: () => string }. Throws if deletions exceed params.maxDeletesPerRun. / leve une erreur si trop de suppressions.
+export function reconcile(boardIn, events, params, ctx, options = {}) {
+  // `inPlace` skips the 1.4 ms structuredClone: the Worker parses a fresh board each run and keeps the original text for its change check. / pas de clone.
+  const board = options.inPlace ? boardIn : structuredClone(boardIn)
+  const nowIso = ctx.now.toISOString(), today = localParts(nowIso, params.timeZone).date
+  const c = { today, nowIso, uid: ctx.uid }
+  const calOps = [], report = { inserted: 0, patched: 0, deleted: 0, revived: 0, pulled: 0, imported: 0, adopted: 0, conflicts: [], droppedFromCalendar: 0, skippedReadOnly: 0, skippedTypes: 0, outsideWindow: 0, notes: [] }
+  const byId = new Map(events.map((e) => [e.id, e])), live = (e) => e && e.status !== 'cancelled' && e.status !== 'unknown'
+  const tasks = board.tasks
+  const taskById = new Map(tasks.map((t) => [String(t.id), t]))
+  const linkedEventIds = new Set(tasks.filter((t) => t.gcal?.id).map((t) => t.gcal.id))
+  const doomed = new Set() // event ids scheduled for deletion this run / evenements a supprimer
+  const queueDelete = (eventId, taskId, reason) => { if (doomed.has(eventId)) return; doomed.add(eventId); calOps.push({ op: 'delete', eventId, taskId, reason }); report.deleted++ }
+
+  // 1. Adoption: an event that already represents a Plan task (an earlier .ics import, or lost sync state). / adoption d'un evenement deja equivalent.
+  for (const e of events) {
+    if (!live(e) || linkedEventIds.has(e.id)) continue
+    const uidMatch = /^plan-(.+)@zenray-progress$/.exec(e.iCalUID || '')
+    const ownedId = e.extendedProperties?.private?.zrPlanTaskId
+    const task = taskById.get(String(uidMatch ? uidMatch[1] : ownedId || ''))
+    if (task && !task.gcal) { task.gcal = { id: e.id, hash: hashCanon(canonOfEvent(e, params)), origin: 'plan' }; linkedEventIds.add(e.id); report.adopted++ }
+  }
+  // 2. Events we created whose task no longer exists: the task was removed from the Plan. / evenements crees par nous dont la tache a disparu.
+  for (const e of events) {
+    if (!live(e) || linkedEventIds.has(e.id)) continue
+    if (e.extendedProperties?.private?.zrSource === 'zenray-plan') queueDelete(e.id, e.extendedProperties.private.zrPlanTaskId, 'task removed from the Plan')
+  }
+  // 3. Previously linked events whose task was removed from the Plan (covers imported events, which carry no marker). / liens anciens dont la tache a disparu.
+  const prevLinks = board.gcalSync?.links || {}
+  for (const [eventId, info] of Object.entries(prevLinks)) {
+    if (linkedEventIds.has(eventId) || info.deleted) continue
+    if (live(byId.get(eventId))) queueDelete(eventId, info.taskId, 'task removed from the Plan')
+  }
+
+  // 4. Per task.
+  for (const task of tasks) {
+    const g = task.gcal
+    if (!g) {
+      if (task.status === 'dropped') continue
+      calOps.push({ op: 'insert', eventId: eventIdFor(task.id), taskId: task.id, body: insertBody(task, params), reason: 'new task' }); report.inserted++
+      task.gcal = { id: eventIdFor(task.id), hash: hashCanon(canonOfTask(task, params)), origin: 'plan' }
+      continue
+    }
+    const event = byId.get(g.id)
+    if (event?.status === 'unknown') continue // lookup budget exhausted this run: decide nothing, try again next run / budget epuise : on ne decide rien
+    if (!live(event)) { // event missing: either we removed it earlier, or it was deleted in the calendar / evenement absent
+      if (g.deleted) {
+        if (g.origin === 'plan' && task.status !== 'dropped') { g.deleted = false; calOps.push({ op: 'revive', eventId: g.id, taskId: task.id, body: insertBody(task, params), reason: 'task active again' }); report.revived++ }
+        continue
+      }
+      if (task.status !== 'dropped') { task.status = 'dropped'; task.droppedAt = nowIso; task.doneAt = null; report.droppedFromCalendar++ }
+      g.deleted = true
+      continue
+    }
+    if (g.deleted) g.deleted = false // restored in the calendar / retabli dans l'agenda
+    if (task.status === 'dropped') { // dropped in the Plan: plan-origin events are removed, imported ones are left alone
+      if (g.origin === 'plan' && !g.deleted) { queueDelete(g.id, task.id, 'task dropped'); g.deleted = true }
+      continue
+    }
+    const readOnly = params.readOnlyEventTypes.includes(event.eventType) || Boolean(event.organizer && !event.organizer.self) || Boolean(event.locked)
+    const planCanon = canonOfTask(task, params), calCanon = canonOfEvent(event, params)
+    const planChanged = !hashMatches(g.hash, planCanon), calChanged = !hashMatches(g.hash, calCanon)
+    if (calChanged && (!planChanged || readOnly)) { // pull / reprise
+      if (!sameCanon(planCanon, calCanon)) {
+        const [title, date, startTime, durationMin] = calCanon
+        Object.assign(task, { title, date, startTime, durationMin }); report.pulled++
+      }
+      g.hash = hashCanon(calCanon)
+      if (planChanged && readOnly) report.skippedReadOnly++
+      continue
+    }
+    if (calChanged && planChanged && !sameCanon(planCanon, calCanon)) report.conflicts.push({ taskId: task.id, title: task.title, plan: planCanon, calendar: calCanon, resolution: 'Plan wins' })
+    const timeDiffers = !sameCanon(planCanon.slice(1), calCanon.slice(1))
+    const wantedSummary = summaryFor(task, params, g.origin)
+    const summaryDiffers = g.origin === 'plan' ? (event.summary || '') !== wantedSummary : calCanon[0] !== planCanon[0]
+    const description = calendarDescription(task, g.origin === 'plan' ? task.note || '' : event.description || '')
+    const descDiffers = (event.description || '') !== description
+    if (readOnly) { if (timeDiffers || summaryDiffers || descDiffers) report.skippedReadOnly++; g.hash = hashCanon(planCanon); continue }
+    if (timeDiffers || summaryDiffers || descDiffers) {
+      const span = isAllDay(event) ? Math.max(1, daysBetween(event.start.date, event.end.date)) : 1
+      calOps.push({ op: 'patch', eventId: g.id, taskId: task.id, reason: [timeDiffers && 'time', summaryDiffers && 'title', descDiffers && 'note'].filter(Boolean).join('+'),
+        body: { summary: wantedSummary, ...(g.origin === 'plan' || descDiffers ? { description } : {}), ...timeBody(task, params, span) } })
+      report.patched++
+    }
+    g.hash = hashCanon(planCanon)
+  }
+
+  // 5. Unlinked live events inside the import window become tasks. / evenements libres de la fenetre : nouvelles taches.
+  const linkedNow = new Set(tasks.filter((t) => t.gcal?.id).map((t) => t.gcal.id))
+  for (const e of events) {
+    if (!live(e) || linkedNow.has(e.id) || doomed.has(e.id)) continue
+    if (e.extendedProperties?.private?.zrSource === 'zenray-plan') continue
+    if (params.skipEventTypes.includes(e.eventType)) { report.skippedTypes++; continue }
+    if (eventDate(e, params.timeZone) < params.importFrom) { report.outsideWindow++; continue }
+    const task = taskFromEvent(e, params, c); tasks.push(task); linkedNow.add(e.id); report.imported++
+  }
+
+  const deletions = calOps.filter((o) => o.op === 'delete').length
+  if (deletions > params.maxDeletesPerRun) throw new Error(`refusing ${deletions} deletions (limit ${params.maxDeletesPerRun}); inspect the dry run, then raise --max-deletes`)
+  const links = {}
+  for (const t of tasks) if (t.gcal?.id) links[t.gcal.id] = { taskId: String(t.id), origin: t.gcal.origin, ...(t.gcal.deleted ? { deleted: true } : {}) }
+  board.gcalSync = { version: 1, calendarId: params.calendarId, lastRun: nowIso, links }
+  return { board, calOps, report }
+}

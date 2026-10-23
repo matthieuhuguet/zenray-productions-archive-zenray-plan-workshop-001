@@ -1,0 +1,215 @@
+# Protocole ZenRayMedia — thème T-04-1-1 (Death Stranding 2)
+
+## 0. Ce qu'est ZenRayMedia, et pourquoi ce thème existe
+
+ZenRayMedia est un **éditeur**, au sens d'Unreal : une scène, des composants qu'on pose dessus,
+un rendu déterministe. La visée est un **Photoshop ou un DaVinci de la publication média** — on
+ouvre, on pose, on exporte, sans attendre.
+
+Un thème n'est donc pas une feuille de style : c'est un **jeu de pièces posables**. C'est
+pourquoi chaque composant est un fichier autonome, et pourquoi la fidélité compte — une pièce
+approximative est une pièce qu'on ne repose jamais.
+
+### Le catalogue vise 1024 œuvres, pas des articles de presse
+
+`taxonomy.js` déclare **16 familles × 8 sous-familles × 8 variantes = 1024 thèmes**. La presse
+n'en est qu'une :
+
+| | | | |
+|---|---|---|---|
+| 01 Presse & éditorial | 02 Télévision & broadcast | 03 Cinéma & trailer | **04 Jeu vidéo** |
+| 05 Publicité & retail | 06 Luxe & mode | 07 Social vertical | 08 Créateur & YouTube |
+| 09 Musique & sound | 10 Tech & produit | 11 Corporate & institution | 12 Science & pédagogie |
+| 13 Sport & compétition | 14 Événement & affiche | 15 Architecture, design & art | 16 Japon & Asie |
+
+Sept formats de sortie coexistent : article web, carré 1080, portrait 4:5, vertical 9:16,
+A4 300 dpi, vidéo 16:9, **habillage alpha 16:9**. Un composant doit tenir dans les sept, d'où
+les unités relatives au conteneur.
+
+**La méthode est donc la vraie livraison.** Chaque œuvre future — une chaîne d'info, un trailer,
+une marque de luxe, une chaîne YouTube — passera par la même chaîne : capturer, cadrer, découper,
+reproduire, vérifier, brancher. Ce thème de jeu vidéo est le premier des 1024 : ce qu'on fixe ici
+tient pour les 1023 autres.
+
+Reproduire une interface réelle au pixel est le **banc d'essai** de cette promesse. Si l'éditeur
+sait rendre une interface de jeu complète — la plus dense en signes, en halos et en surimpression
+— il sait rendre à peu près tout.
+
+## 1. Où un thème se branche dans le code
+
+| Fichier | Rôle |
+|---|---|
+| `themes/registry.js` | découvre les thèmes par `import.meta.glob`. **Déposer un fichier suffit.** Les métadonnées viennent du NOM (`T-FF-S-V--slug`), jamais du contenu : lister 1024 thèmes doit coûter 1024 chaînes, pas des mégaoctets. |
+| `<theme>/theme.json` | description, formats acceptés, polices, notes de calibration. |
+| `<theme>/tokens.css` | les variables du thème. Couleurs **prélevées élément par élément** (`zrm-pick`), jamais agrégées. |
+| `<theme>/component-registry.json` | la liste ordonnée des composants : `id`, `name`, `group`, `reference`, `file`. |
+| `<theme>/components/*.html` | page de documentation autonome d'un composant. |
+| `<theme>/parts/*.html` | le **fragment léger** que l'éditeur assemble. C'est lui que charge `componentCatalog.js`. |
+| `<theme>/parts/00-icons.html` | la planche de `<symbol>` SVG, injectée une fois par page. |
+| `compile.js` | Cut + Theme + Format → une page HTML autonome. Aucun aléa hors `rng(seed)` : deux compilations donnent la même chaîne, octet pour octet. |
+
+**Conséquence pratique :** un composant écrit ici apparaît dans l'onglet Media au prochain build,
+sans toucher au code. La seule contrainte est le nommage et l'entrée de registre.
+
+## 1 bis. CE QUI REND UN COMPOSANT ÉDITABLE — le point que j'avais raté
+
+Un composant n'est pas un extrait de HTML : c'est un **gabarit**. `compile.js` le passe dans
+`renderTemplate()` avec les données du brief avant de l'insérer dans la page.
+
+Champs disponibles, tous issus de `templateData()` :
+
+| Champ | Ce que c'est |
+|---|---|
+| `{{title}}` `{{message}}` | le titre et la phrase du brief |
+| `{{audience}}` `{{register}}` `{{intent}}` | à qui, sur quel ton, pour quoi faire |
+| `{{themeName}}` `{{formatLabel}}` | le thème et le format courants |
+| `{{words}}` `{{readingMinutes}}` `{{duration}}` | mesures du texte réel |
+| `{{#beats}} … {{/beats}}` | la boucle sur les blocs : `{{text}}`, `{{{html}}}`, `{{roleLabel}}`, `{{number}}`, `{{weight}}`, `{{tempo}}`, `{{duration}}` |
+
+**Un composant qui porte un texte figé n'est pas un composant, c'est une capture d'écran habillée
+en HTML.** Les trente-six pièces échafaudées portaient toutes leur exemple — au point que
+`compile.js` avait une rustine qui réécrivait le contenu de tout `<h1-3>` avec le titre du brief.
+Cette rustine détruisait aussi le balisage interne du titre. Elle a été supprimée le 2026-07-28,
+les composants lisant désormais `{{title}}` comme n'importe quel gabarit.
+
+**Corollaire de fidélité.** Un composant dont le texte vient de l'éditeur ne connaît pas ses
+lettres à l'avance : les petites capitales de la source sont à 0,745 de la capitale, `font-variant-caps`
+en rend 0,667. Corriger l'écart demanderait d'envelopper chaque lettre, donc de figer le texte.
+**La fidélité s'arrête là où l'éditabilité commence, et c'est l'éditabilité qui gagne** — sinon
+la pièce n'est plus posable, et une pièce non posable ne sert à rien dans un éditeur.
+
+## 1 ter. L'ARBORESCENCE DU THÈME, et pourquoi elle tient en six entrées
+
+```
+T-04-1-1--revelation-cinematique/
+  theme.json                 formats, polices, calibration
+  tokens.css                 les variables, couleurs prélevées élément par élément
+  component-registry.json    la liste ordonnée : id, name, group, reference, file
+  parts/                     LE LIVRABLE — un fragment par composant
+  _work/                     la matière : regions.json, regions/, crops/, check/
+  _deprecated/               l'ancien, avec son POURQUOI.md
+```
+
+Seuls les quatre premiers sont chargés par l'éditeur. La racine était montée à onze entrées où
+l'on ne distinguait plus le produit de l'outillage — c'est exactement ce qui rend un dossier
+illisible, et ce qui m'a fait perdre le fil.
+
+## 2. Le pipeline de reproduction, dans l'ordre
+
+| # | Étape | Résultat | Outil |
+|---|---|---|---|
+| 1 | Collecter les captures | 73 | — |
+| 2 | Écarter ce qui n'est pas de l'interface | 15 → `hors-sujet/` | à l'œil |
+| 3 | Écarter les fichiers en double | 8 → `doublons/` | md5 |
+| 4 | Relever police et couleurs | Barlow ; couleurs par élément | `zrm-detect-font`, `zrm-pick` |
+| 5 | Cadrer les zones sur la capture ENTIÈRE | 50 captures, 307 zones | `zrm-regions` |
+| 6 | Valider les cadrages (rouge sur fond voilé) | validé | `regions/*.png` |
+| 7 | Découper sur les originales | 307 PNG | `zrm-regions --cut` |
+| 8 | **Écrire chaque composant en HTML/SVG** | 1 / 307 | à la main |
+| 9 | Vérifier par superposition | une image par composant | `zrm-check` |
+| 10 | Inscrire au registre, brancher dans l'éditeur | à faire | `component-registry.json` |
+
+## 3. La règle des treize itérations — ce qui a été payé sur la roue de dialogue
+
+**Ne jamais présenter un composant avant d'avoir bouclé treize fois dessus.**
+
+Le sentiment d'avoir fini arrive systématiquement AVANT la fin réelle. Aux tours 1 à 5 la roue
+paraissait finie : elle était fausse d'un facteur 2,4 en échelle. Au tour 9 elle paraissait
+finie : le rayon était 18 % trop grand. Au tour 12 elle paraissait finie : les bouts n'avaient
+aucune des trois pièces qu'ils portent.
+
+**Le seul signal fiable est le tarissement** : deux tours consécutifs sans qu'aucune mesure
+nouvelle ne contredise le résultat.
+
+Un tour = une **mesure**, un correctif, une vérification. Jamais une relecture de ce qu'on a
+écrit. Ce qui peut être mesuré ne se juge pas : bords au balayage de valeurs, couleurs au
+piqueur à plusieurs endroits, formes au grossissement ×10 minimum.
+
+### Les cinq façons de se tromper, toutes rencontrées
+
+1. **Supposer la régularité** — quatre marques identiques là où il y en a deux différentes.
+2. **Généraliser l'exception** — l'inverse ; un motif réel a presque toujours une exception.
+3. **Ajuster une valeur fausse** au lieu de demander si elle devrait exister.
+4. **Ajouter du détail absent** de la source, aussi faux que d'en omettre.
+5. **Prendre une description d'EFFET pour une description de GÉOMÉTRIE.** Traduire l'une en
+   l'autre est le travail, et il passe par la mesure. « Un effet cybernétique qui relie » est un
+   effet ; « un quart de cercle de rayon 42 px raccordé à 45° » est une géométrie.
+
+### Ce que la roue a appris sur le fond
+
+- Les coins sont **coupés en biseau**, pas arrondis. Un `border-radius` donne un objet doux ; le
+  biseau donne un objet technique. C'est la différence de ton entre une application et un jeu.
+- La barre n'est pas un aplat : **dégradé vertical + trame fine**. Sans la trame elle paraît
+  morte.
+- Le liseré clair est sur **un seul côté**. Sur les quatre, ça fait bouton.
+- Les crochets d'angle sont **quatre marques**, pas une bordure : ils accompagnent la forme sans
+  la fermer.
+- L'anneau porte **huit** encoches (les huit directions du stick), pas quatre.
+
+## 4. Les règles SVG, apprises à la dure
+
+- **Unités en pixels de la source.** Le viewBox parle la langue de la capture ; la conversion
+  vers l'écran se fait à UN seul endroit. Sinon chaque mesure demande un calcul mental et se
+  trompe.
+- **`vector-effect: non-scaling-stroke` est interdit** sur une forme redimensionnée : le trait
+  reste à 1 px, donc plus la pièce est grande, plus elle paraît fine.
+- **Une forme dessinée UNE fois**, répétée par `<use transform="rotate(...)">`. Quatre chemins
+  écrits à la main divergent toujours, et la divergence se voit.
+- **`overflow: visible`** sur tout SVG dont les tracés sortent du viewBox — un halo sort toujours.
+- **`cqw`, pas `em`.** L'`em` hérite de `--u` et suit la fenêtre ; le `cqw` suit le conteneur,
+  donc la composition.
+- **Les signes se dessinent en SVG, jamais approximés en CSS.** Un crochet d'angle en `border`
+  n'a jamais la bonne épaisseur ni le bon débord.
+- Les glyphes partagés vont dans `00-icons.html` en `<symbol>`, appelés par `<use href="#...">`.
+  Un `<use>` sans sa planche ne lève aucune erreur : il ne dessine rien, en silence.
+
+## 5. Le vérificateur, et pourquoi c'est une image et pas une page
+
+`zrm-check <theme> <zone>` produit **une image PNG** : source en haut, rendu au milieu, les deux
+fondus en bas. Le fondu tranche — deux images l'une sous l'autre laissent croire qu'elles se
+ressemblent ; superposées, un écart de trois pixels devient un dédoublement net.
+
+Trois pièges corrigés dans l'outil, chacun capable de faire corriger dans le vide :
+
+1. Un composant est un **fragment**, pas une page. Ouvert seul, il tombe sur fond blanc sans les
+   tokens : un anneau blanc devient invisible et on corrige un défaut qui n'existe pas.
+2. Le rendu doit être capturé **à la taille de la source**, sinon tout écart de proportion se lit
+   comme un écart de position.
+3. Le crop porte **12 px de marge** de chaque côté. Donner toute cette largeur au composant
+   l'étale dans la marge : il paraît trop large d'exactement deux fois la marge.
+
+## 6. Ce qu'on ne fait pas
+
+- **Pas de planche HTML de comparaison.** Elle mélange le fini et le non-fini, se régénère en
+  entier pour un composant, coûte des jetons à chaque passe, et personne ne la lit jusqu'en bas.
+  Un composant = une image = un verdict.
+- **Pas d'écriture en lot.** Trente-six composants d'un coup sans crop ont produit trente-six
+  approximations.
+- **Pas de cadrage à l'œil sur ce qui brille.** Un halo n'a pas de bord, il s'éteint. Il se
+  mesure au balayage de pixels (`zrm-extent`, ou `zrm-regions --fit`), sinon on le coupe de
+  cinquante pixels — trois fois de suite, mesuré.
+- **Pas de mesure acceptée sans garde-fou.** Si la teinte touche le bord de la fenêtre de mesure,
+  elle inonde le voisinage : la mesure décrit le fond, pas le composant. On la REJETTE.
+- **Pas de jugement sur vignette.** Un crop se regarde à 300 px de haut minimum.
+- **Pas de `zrm-palette` sur une capture de jeu.** Les blocs plats y sont le rendu 3D, pas
+  l'interface : elle rend du brun de peau et de l'orange de décor.
+- **On ne refait pas la roue de dialogue.** Treize itérations, validée. C'est l'étalon.
+- **On ne touche pas au décor.** Jamais un personnage, un paysage, un rendu 3D de scène.
+
+## 7. Ordre de travail
+
+Par fréquence d'apparition : ce qui revient sur le plus d'écrans structure le thème. Compté sur
+les 307 zones (209 noms distincts) :
+
+`titre-ecran` 20× · `barre-actions` 11× · `bandeau-etat` 7× · `sous-titre` 5× ·
+`grappe-ath` 4× · `liste-cargo` 4× · `bouton-confirmer` 3× · `logo-titre` 3× · puis les pièces
+uniques.
+
+## 8. Prochaine étape, une seule
+
+**Écrire `titre-ecran`**, le composant le plus fréquent du lot (20 écrans).
+
+- Crop de référence : `crops/DS2__GUID__08__titre-ecran.png`
+- Fichier à produire : `parts/01-title-screen.html` (fragment) — l'entrée de registre existe déjà
+- Boucle : écrire → `zrm-check` → regarder → mesurer → corriger, jusqu'au tarissement
+- Puis : validation par Matthieu, entrée au registre, et le suivant

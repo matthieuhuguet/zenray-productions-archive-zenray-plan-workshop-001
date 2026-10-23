@@ -1,0 +1,14 @@
+{
+  "id": "T-09-1-1",
+  "name": "Client de streaming",
+  "family": 9,
+  "subfamily": 1,
+  "variant": 1,
+  "fonts": [
+    "AnthropicSans"
+  ],
+  "forms": [
+    3
+  ],
+  "generated": "scripts/generer-theme-spotify.mjs"
+}

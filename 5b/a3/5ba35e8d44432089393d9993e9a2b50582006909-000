@@ -1,0 +1,151 @@
+{
+  "task": "Historical snapshot: ZenRayCloud stabilization work from August 2026",
+  "status": "historical; see activeTask for the current continuation",
+  "automation": {
+    "id": "raffinement-zenraycloud-jusqu-midi",
+    "cadence": "toutes les heures",
+    "fin": "2026-08-18T12:00:00+09:00"
+  },
+  "runtime": {
+    "dossier": "/Users/zenray/Downloads",
+    "destination": "pages/Cloud/Downloads",
+    "voies": 2,
+    "application": 24583,
+    "processus": [
+      24645,
+      24646
+    ],
+    "demarrage": "2026-08-17T05:05:04+09:00",
+    "journal": "~/Library/Application Support/ZenRayCloud/logs/downloads.log",
+    "etat": "deux voies actives avec le rail vidéo déterministe ; le fichier critique de 7,62 Go a terminé ses 83 parts, poussé le dépôt -04 et publié son manifeste, puis les voies ont continué sur les vidéos suivantes",
+    "note": "L'écran réel affiche maintenant 149,1 Mo/s, 10,76 Go envoyés et confirmés et 437 fichiers sur 13 932. Tout nouvel empaquetage attendra la fermeture propre de l'application et de ses enfants."
+  },
+  "verified": [
+    "81 tests ciblés passent, les scripts modifiés passent node --check, les deux compilations TypeScript sans variables inutilisées passent et le build Vite passe.",
+    "Chaque voie possède son atelier complet ; une voie ne peut plus effacer le clone, les images, les médias ou les dépôts d'une autre.",
+    "La fermeture de ZenRayCloud arrête aussi tous ses processus enfants.",
+    "Le verrou commun vérifie le PID vivant, reprend immédiatement un propriétaire mort et ne peut pas être volé sur une simple ancienneté.",
+    "Le cache d'empreintes fusionné contient 13 932 entrées et les deux voies le réutilisent intégralement.",
+    "Le marquage des suppressions respecte la même partition que l'inventaire ; une voie ne peut plus marquer les fichiers des autres voies.",
+    "L'interface agrège maintenant 13 932 fichiers et affiche 2/2 voies saines.",
+    "Le paquet neuf affiche 2,04 Go envoyés et confirmés après les deux premiers pushes réels ; le faux 0 Mo / 532,02 Go a disparu.",
+    "Une interruption après dix parts puis une relance conserve exactement le commit, les onze blobs et les 996 147 480 octets distants jusqu'à la partie 15 ; la publication suivante ajoute seulement dix parts et porte le dépôt à vingt et un blobs et 1 992 294 840 octets.",
+    "Le changement de tranche réel pousse le dépôt déterministe -01, crée -02 et continue jusqu'à la partie 30/83 sans repartir de zéro.",
+    "Une capture après quatre changements de dépôt montre 149,1 Mo/s, 10,76 Go envoyés et confirmés et 437 fichiers sur 13 932 ; le zéro bloqué ne revient pas.",
+    "Le fichier de 7,62 Go interrompu termine ses 83 parts sur quatre dépôts déterministes et publie son manifeste avec le dernier commit 51d80aa.",
+    "Une vidéo privée de 889 514 098 octets est restaurée depuis neuf parts ; sa taille, son SHA-256 05bba0020a2a7c140503c5a18d08536aae1e6668b09a2ce42725a925eeacbbfe et cmp correspondent exactement à la source.",
+    "Les familles chunk (118 818 octets), image chiffrée (15 736 832 octets) et audio chiffré (7 076 440 octets) sont aussi restaurées avec taille et SHA-256 identiques et cmp égal à zéro.",
+    "Aucune dépendance de Cloud/package.json n'est prouvée inutilisée ; aucune n'a donc été retirée arbitrairement."
+  ],
+  "implementedForNextLaunch": [
+    "Le panneau distingue préparation, découpe et envoi, au lieu d'annoncer une découpe binaire pendant un rail audio.",
+    "Images, vidéos, audio et PDF écrivent sourceRel et sourceSha256 ; les anciens manifestes sont enrichis sans renvoi si leur commit est postérieur à la source locale.",
+    "Les vidéos rendent leur manifeste au chemin unique commitDataFiles au lieu de pousser directement dans zenray-data.",
+    "Les deux voies sérialisent leurs écritures vers le dépôt média partagé ; les collisions « ref a bougé » doivent disparaître au prochain lancement.",
+    "Un dépôt de morceaux ne s'ouvre plus avant le premier vrai binaire à envoyer ; un passage inchangé ne crée plus de dépôt README vide.",
+    "Le contrôle des suppressions lit les manifestes du clone local et ignore entièrement les chemins exclus ou de bruit.",
+    "Les restaurations et réutilisations sont publiées par lots pendant le passage, avec remise en file atomique si un lot échoue.",
+    "Les politiques de verrou court et long sont centralisées et testées.",
+    "Le succès exige désormais un bilan final done de chaque voie ; un code de sortie nul sans preuve métier devient une erreur visible.",
+    "Un échec conserve le dernier succès connu au lieu d'en effacer la date et le bilan.",
+    "La minuterie de rattrapage se réarme avec la fréquence courante et son délai initial vient de params.json.",
+    "FSEvents se reconnecte après une panne de volume, signale une seule fois la rupture et une seule fois le retour, puis annule la reprise si le dossier est retiré.",
+    "config.json absent initialise l'app, tandis qu'un fichier présent mais corrompu arrête le démarrage avec une erreur visible au lieu d'effacer les dossiers surveillés.",
+    "Le cache mémoire de configuration ne change qu'après la réussite de l'écriture atomique sur disque.",
+    "Les mises à jour de progression ne transportent plus le catalogue complet ; React garde le dernier reçu et le remplace seulement à l'ouverture ou à la fin d'un passage.",
+    "Le catalogue disque est mis en cache par date et taille d'index ; 1,68 Mio de JSON et 4 332 contrôles locaux sortent de la boucle à 10 Hz.",
+    "Les icônes Finder ne sont mémorisées qu'après confirmation de l'outil ; les lots refusés restent à retenter et ne cassent pas la sauvegarde.",
+    "Les boutons d'ouverture vérifient le chemin ou attendent macOS, puis affichent une erreur au lieu de répondre toujours vrai.",
+    "Chaque voie forme un groupe macOS ; pause, reprise, SIGTERM puis SIGKILL borné atteignent Node et tous ses enfants au lieu de laisser Git ou ffmpeg orphelins.",
+    "Le tampon NDJSON reconstruit les fragments et consomme la dernière ligne sans retour ; tout événement illisible est visible et invalide le résultat.",
+    "Le protocole refuse un événement sans type, un compteur négatif, un bilan incomplet ou un rail inventé ; les deux événements jusque-là ignorés deviennent visibles et la branche jamais émise est supprimée.",
+    "Une publication d'images échouée invalide et reprend le passage ; seul l'échec d'ingestion d'un fichier peut retomber sur le rail chunk sans duplication.",
+    "Le no-op flushVidPush et son état différé mort sont supprimés sans appel résiduel.",
+    "Les rails qui chargent tout en mémoire basculent au-dessus de RAW_THRESHOLD vers les chunks en flux ; la vidéo reste sur son rail brut borné.",
+    "Le cache d'empreintes exige aussi ctime ; les anciens caches et les réécritures de même taille avec mtime restauré sont rehachés puis migrés.",
+    "Le hachage retrouve les tailles en temps constant ; un ouvrier mort est remplacé et ses empreintes absentes sont recalculées avant toute sauvegarde.",
+    "Un fichier changé après l'inventaire est rehaché avant comparaison ; chaque rail revalide taille, mtime et ctime après lecture avant de publier son manifeste.",
+    "Un passage avec fichiers sautés ou morceaux non vérifiés reste rouge, ne pose aucune icône Finder et déclenche la reprise bornée au lieu de devenir un faux succès.",
+    "L'index local est requis pour un passage ZenRayCloud complet ; son échec remonte. Le cache facultatif reste non fatal mais toute corruption ou écriture manquée est journalisée.",
+    "Les reprises attendent réellement leur délai et sont annulables ; reprendre après une pause lance un balayage complet qui ferme le trou laissé par FSEvents.",
+    "Destination, exclusions et suppression utilisent la dernière configuration dans la file, le passage sali et la reprise différée ; tout changement actif programme un nouveau passage.",
+    "Une résolution GitHub invalide d'abord le jeton précédent ; les minuteries de démarrage, diffusion et rattrapage sont toutes annulées avant la fermeture.",
+    "Un index local corrompu conserve le dernier catalogue mais rend le dossier rouge et journalise la cause jusqu'à sa reconstruction.",
+    "La restauration est bornée à un morceau en mémoire, retente les lectures, vérifie avant publication atomique et n'écrase jamais un fichier existant.",
+    "L'index local réunit chunks, images et médias ; les lots streamables publiés y restent et la fusion multi-voie protège la fiche la plus récente de chaque tranche.",
+    "Chaque fiche connaît son manifeste exact ; l'état du drive compare les trois familles en un seul arbre borné et ne fabrique plus de faux disparus streamables.",
+    "L'état du drive réutilise en lecture seule les empreintes prouvées par taille, mtime et ctime ; seuls les fichiers réellement suspects sont relus.",
+    "Les manifestes streamables sont publiés en lots à 256 éléments ou trente secondes, au lieu d'un push Git et d'un verrou par petite vidéo.",
+    "Les petits fichiers chunkés attendent le seuil adaptatif avant le push Git ; le dernier lot reste garanti par flushShard et le compteur d'envoi mort est supprimé.",
+    "Une sonde GitHub indéterminée ne peut plus être prise pour un dépôt vide ni autoriser un push forcé ; les commandes de sonde et de création sont bornées.",
+    "Un commit de morceaux ou de manifestes ne vaut succès que si le commit passe ou si Git prouve que l'index staged est vide ; aucun lot local n'est effacé après un ancien HEAD poussé.",
+    "Le roulement interne qui vidait la liste avant de déplacer les morceaux est supprimé ; un refus définitif arrête la voie et la reprise choisit proprement le dépôt suivant depuis les sources intactes.",
+    "Le sidecar de vignettes ne s'exécute plus automatiquement après chaque voie ; son lancement manuel exige --apply, ce qui retire le rescan ffmpeg et deux pushes concurrents du cœur de sauvegarde.",
+    "Le watcher ne transporte plus une raison jamais lue, le compteur Finder toujours nul disparaît et le commentaire du seuil chunk correspond de nouveau au comportement réel.",
+    "Seul un passage entièrement vert peut adapter le nombre de voies ou poser des icônes ; le journal d'un refus décrit l'arrêt sûr et la reprise réelle.",
+    "Le rail image prouve add, commit, push et HEAD avant manifeste ; un rollover raté s'arrête, et la vignette pointe son propre dépôt lorsqu'elle franchit seule le plafond.",
+    "GitHub Data API et la résolution locale sont bornés ; HTTP 429 et 5xx sont réellement retentés, tandis que les refus 4xx définitifs s'arrêtent.",
+    "Le rail vidéo sauvegarde désormais les octets source sans remux ni perte de pistes, borne ses dépôts à 2 Gio et exige le commit exact de chaque dépôt traversé.",
+    "Le bouton restaure les manifestes chunk, image, vidéo, audio et PDF par leur chemin exact ; le clair est publié sans écrasement seulement après déchiffrement et égalité SHA-256.",
+    "Une vidéo n'est réputée bit à bit que si son manifeste porte sourceExact:true ; les anciennes vidéos remuxées ambiguës seront renvoyées une fois au prochain passage au lieu de recevoir une fausse preuve.",
+    "Toutes les commandes Git locales du moteur sont bornées ; les trois rails partagent la même validation d'un HEAD complet et la réindexation demandée propage désormais son échec.",
+    "Un événement transfer commun compte les octets confirmés des rails chunk, image, vidéo, audio et PDF ; l'interface ne compare plus ce cumul au poids trompeur du dossier entier.",
+    "Le dernier débit réseau confirmé reste visible entre deux fichiers ; seule la sortie des empreintes efface la vitesse de lecture avant l'envoi.",
+    "Une vidéo exacte cible des dépôts déterministes par empreinte et tranche ; un clone partiel de reprise conserve seulement l'arbre, saute les parts distantes et ne télécharge aucun ancien binaire.",
+    "Un HEAD vidéo local non confirmé reste à pousser tant que ses chemins sont en attente ; un arbre local inchangé ne peut plus effacer la file ni fabriquer un succès distant.",
+    "Le protocole Cloud nomme `video` le rail exact, centralise les quatre rails autorisés et supprime le second faux message de push lorsque la file est déjà vide.",
+    "Les méthodes publiques inutilisées headSha et ctx.pushShard sont retirées du rail vidéo après recherche d'usage négative sur le code actif.",
+    "Quatre outils actifs laissent le contexte ouvrir son dépôt au premier octet ; ils ne créent plus de README orphelin avant une vidéo ou un blob.",
+    "Un nouveau manifeste audio ou PDF utilise le chemin canonique <source>.media.json au lieu d'un suffixe aléatoire qui accumulait les doublons."
+  ],
+  "next": [
+    "Laisser finir le paquet neuf puis vérifier : zéro voie morte, zéro collision de ref média, total 13 932, aucun nouveau dépôt de morceaux vide, bilan agrégé exact et index final écrit.",
+    "Lancer un second passage inchangé pour prouver que les streamables enrichis ne repartent plus.",
+    "Continuer ensuite l'audit ciblé ; ne supprimer que ce qu'un test ou une recherche d'usage prouve mort.",
+    "Après la fin du passage courant, mesurer la charge du protocole léger et vérifier que le tableau complet revient au bilan final."
+  ],
+  "blocked": [
+    {
+      "quoi": "Extension FinderSync native",
+      "pourquoi": "macOS exige un certificat Developer ID ; NSWorkspace.setIcon reste le contournement livré."
+    },
+    {
+      "quoi": "Dépôts distants vides créés par les anciens passages",
+      "pourquoi": "Le code n'en crée plus, mais leur suppression distante est destructive et n'est pas exécutée sans cible validée."
+    }
+  ],
+  "pendingTask": {
+    "title": "Drive : total GitHub tronqué après 5 pages",
+    "status": "corrigé, testé et déployé",
+    "symptom": "La vue Drive affiche 439 repos et environ 646 Go alors que le compte GitHub contient davantage de shards.",
+    "cause": "server/repos.js limite la lecture de user/repos à page <= 5, donc au plus 500 repos bruts avant le filtre shardRe.",
+    "evidence": [
+      "Les 500 premiers repos donnent 439 repos ZenRay et 645.85 Gio selon le champ GitHub size, ce qui reproduit la capture.",
+      "La pagination complète donne 1010 repos ZenRay ; les 571 repos après la page 5 sont des shards v2 et représentent 1704.87 Gio supplémentaires.",
+      "Les dépôts archive-downloads présents dans les 500 premiers représentent déjà 363.62 Gio ; le dossier Downloads n'est donc pas absent du total affiché."
+    ],
+    "next": "Recharger la section Drive et confirmer que le total inclut les dépôts situés après la page 5."
+  },
+  "activeTask": {
+    "task": "ZenRay Assets T6.6-catalogue: replace the oversized project registry with a lightweight index",
+    "status": "in progress; T6.6 local code and checks pass; cloud migration and deployment wait for active archives; T6.4c remains pending until refreshed ConversationIndex hashes match cloud",
+    "verified": [
+      "C210d commit 0494f146 and documentation commit e86b4d6a are on origin/main.",
+      "Full suite: 2,003 tests passed and one was skipped; final Vite build succeeded.",
+      "Production deployment d3bdc21a serves HTML and app assets byte-identically to dist.",
+      "Ten-minute recheck confirms deployment d3bdc21a still points to source 0494f14 with matching JavaScript and CSS hashes.",
+      "C210e full suite: 2,004 tests passed and one was skipped; Vite build succeeded.",
+      "Production deployment c5faf638 serves HTML, app entry, CSS and the registry chunk byte-identically to dist.",
+      "C210e ten-minute recheck at 09:51 CEST confirms Production/main source 5409fbd; HTML, JavaScript and CSS exactly match dist.",
+      "Gallery separation, retained triage, cloud folder browsing and breadcrumbs pass 18 targeted tests.",
+      "GitHub Contents at zenray-data/main commit 5d3da0bd reports the legacy registry blob ce257edda9febb409693a3f5f33d153b57877449 at 44,301,436 bytes; refresh the projection against the post-archive revision.",
+      "Focused catalogue, publisher, sparse-writer and view-model suites: 20 tests passed.",
+      "AssetsService suite: 91 tests passed; npm run build completed after transforming 2,849 modules.",
+      "CheckSkillContract.mjs returns ok:true with no changed source or skill files.",
+      "At 10:25 CEST the Assets dashboard showed one running archive and two queued archives across three projects; daemon reload is deferred until all finish."
+    ],
+    "next": "After the Assets dashboard has zero queued or running jobs, reload the daemon, publish the compact index, verify its remote SHA, size and project data, deploy the UI and recheck production after ten minutes; then re-inventory the changing ConversationIndex files for T6.4c.",
+    "resumeDate": "9 October 2026"
+  },
+  "updatedAt": "2026-10-09T10:27:37+02:00"
+}

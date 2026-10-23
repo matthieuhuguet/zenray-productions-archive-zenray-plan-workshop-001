@@ -1,0 +1,102 @@
+// ZenRayMedia — gabarits HTML déposés. Un test par thème : c'est ce qui garantit qu'un
+// gabarit ne se dégrade pas en silence quand le moteur évolue.
+import { describe, it, expect } from 'vitest'
+import { listThemes, loadTheme } from './themes/registry.js'
+import { compile } from './compile.js'
+import { buildCut } from './cut.js'
+import { getFormat } from './formats.js'
+import { inspectStatic, summarize } from './critic.js'
+import { seedProject } from './store.js'
+
+describe('T-01-1-2 — Une de rupture', () => {
+  it('est découvert par le registre avec sa famille', () => {
+    const e = listThemes().find((x) => x.id === 'T-01-1-2')
+    expect(e).toBeTruthy()
+    expect(e.name).toBe('Une de rupture')
+    expect(e.familyLabel).toBe('Presse & éditorial')
+    expect(e.source).toBe('html')
+  })
+
+  it('déclare ses formats, ses polices et son calibrage privé', async () => {
+    const t = await loadTheme('T-01-1-2')
+    expect(t.formats).toContain('F-print-a4')
+    expect(t.formats).toContain('F-still-1080x1920')
+    // Anton, identifiee par Matthieu au What-The-Google-Font. Elle n'a QU'UNE graisse :
+    // un font-weight:700 sur elle produirait un faux gras qui empate ses contreformes carrees.
+    expect(t.fonts).toEqual(['Anton', 'Spectral', 'Public Sans'])
+    expect(t.calibration.ref).toBe('LIBE')          // privé, jamais rendu
+    expect(t.beatCount).toEqual({ min: 3, max: 10 })
+  })
+
+  it('compile sur les 6 formats déclarés sans champ non résolu ni marque', async () => {
+    const t = await loadTheme('T-01-1-2')
+    const { brief, notes } = seedProject()
+    const cut = buildCut(brief, notes, t)
+    for (const id of t.formats) {
+      const { html } = compile({ brief, cut, theme: t, format: getFormat(id), seed: 1 })
+      expect(html, id).toContain('Un brief, mille formes')
+      expect(html, id).not.toContain('{{')            // aucun champ oublié
+      expect(html, id).not.toMatch(/https?:\/\//)     // aucune ressource distante
+      expect(html, id).not.toMatch(/lib[ée]ration/i)  // aucune marque rendue
+      expect(html, id).toContain('data-role="hook"')  // les rôles pilotent les composants
+      expect(html, id).toContain('zrm-title')
+    }
+  })
+
+  it('n’applique jamais de faux gras à Anton', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const dir = 'src/zenraymedia/themes/T-01-1-2--une-de-rupture'
+    // Les pages de documentation autonomes ont quitté `src/` le 2026-07-28 : elles pesaient 79 Mo
+    // sur les six thèmes, l'éditeur ne les charge jamais, et elles noyaient le livrable (600 Ko)
+    // dans la matière. Elles vivent maintenant dans l'atelier du thème, sous `docs/`.
+    const atelierDoc = 'docs/zenraymedia/ateliers/T-01-1-2--Liberation/doc'
+    // Anton n'existe qu'en 400. Un font-weight:700 sur elle ferait synthetiser un gras par le
+    // navigateur : les contreformes carrees se bouchent et le rendu cesse de ressembler a la
+    // source. C'est la faute exacte qui rendait le theme faux avec Archivo Narrow.
+    const files = [`${dir}.html`, ...readdirSync(`${atelierDoc}/components`).map((f) => `${atelierDoc}/components/${f}`)]
+    for (const file of files) {
+      const css = readFileSync(file, 'utf8')
+      const bad = /--f-display\)[^};]*;[^}]*font-weight:\s*[5-9]00/.test(css)
+      expect(bad, `${file} met Anton en gras`).toBe(false)
+    }
+  })
+
+  it('est assemblé depuis des composants individuels, chacun ouvrable seul', async () => {
+    const { readFileSync, readdirSync } = await import('node:fs')
+    const dir = 'src/zenraymedia/themes/T-01-1-2--une-de-rupture'
+    // Le registre reste dans `src/` : c'est lui que l'éditeur lit. Les pages autonomes qu'il
+    // décrit vivent dans l'atelier, sous `docs/` — le registre est le livrable, elles sont la doc.
+    const atelierDoc = 'docs/zenraymedia/ateliers/T-01-1-2--Liberation/doc'
+    const registry = JSON.parse(readFileSync(`${dir}/component-registry.json`, 'utf8'))
+    expect(registry.length).toBeGreaterThanOrEqual(8)
+    const files = readdirSync(`${atelierDoc}/components`)
+    expect(files.length).toBe(registry.length)
+    for (const entry of registry) {
+      const html = readFileSync(`${atelierDoc}/${entry.file}`, 'utf8')
+      expect(html.startsWith('<!doctype html>'), entry.id).toBe(true)   // autonome
+      expect(html, entry.id).toContain('--zrm-red')                      // tokens embarqués
+      expect(html.includes('{{'), entry.id).toBe(false)                  // exemple rendu
+      expect(/https?:\/\//.test(html), entry.id).toBe(false)             // zéro réseau
+    }
+  })
+
+  it('passe le Critique sans défaut bloquant', async () => {
+    const t = await loadTheme('T-01-1-2')
+    const { brief, notes } = seedProject()
+    const cut = buildCut(brief, notes, t)
+    for (const id of t.formats) {
+      const v = summarize(inspectStatic({ brief, cut, theme: t, format: getFormat(id) }))
+      expect(v.blocking.map((b) => b.message), id).toEqual([])
+    }
+  })
+})
+
+// AUDIT P0-T8 · `inspectTemplate` existait, testé, mais jamais appelé par `loadTheme` — le
+// commentaire du module promettait un contrôle que le runtime contournait entièrement.
+describe('registry — diagnostic de gabarit (AUDIT P0-T8)', () => {
+  it('un thème HTML chargé porte désormais son diagnostic de squelette', async () => {
+    const t = await loadTheme('T-01-1-2')
+    expect(t.templateDiagnostics).toBeTruthy()
+    expect(t.templateDiagnostics.hasHtmlSkeleton).toBe(true)   // les gabarits déposés en portent un
+  })
+})

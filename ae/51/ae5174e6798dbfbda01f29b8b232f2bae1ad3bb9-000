@@ -1,0 +1,129 @@
+// run-daemon.mjs (20 October 2026): local Google Calendar <-> Plan bidirectional sync daemon.
+// Runs the exact core sync logic on Matthieu's Mac with minimal CPU footprint.
+// Fast path returns in ~3 ms CPU when nothing changed; state is persisted locally.
+// Usage:
+//   node workers/plan-gcal/scripts/run-daemon.mjs [--apply] [--once] [--bench] [--interval=60]
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { tick } from '../src/tick.js'
+
+const args = Object.fromEntries(
+  process.argv.slice(2).map((a) => {
+    const [k, v = 'true'] = a.replace(/^--/, '').split('=')
+    return [k, v]
+  })
+)
+
+const once = args.once === 'true'
+const bench = args.bench === 'true'
+const full = args.full === 'true'
+const dryRun = args['dry-run'] === 'true'
+const intervalSec = Math.max(10, Number(args.interval) || 60)
+
+const workDir = path.join(os.homedir(), '.claude/tmp/tmp-zenray-plan-gcal')
+fs.mkdirSync(workDir, { recursive: true })
+const stateFile = path.join(workDir, 'state.json')
+
+const localState = {
+  get: async () => {
+    try {
+      if (fs.existsSync(stateFile)) return JSON.parse(fs.readFileSync(stateFile, 'utf8'))
+    } catch {}
+    return null
+  },
+  set: async (val) => {
+    try {
+      fs.writeFileSync(stateFile, JSON.stringify(val, null, 2), 'utf8')
+    } catch {}
+  },
+}
+
+function resolveSecret(service) {
+  try {
+    return execFileSync('security', ['find-generic-password', '-a', 'zenray', '-s', service, '-w'], { encoding: 'utf8' }).trim()
+  } catch (err) {
+    throw new Error(`Failed to load secret ${service} from macOS keychain: ${err.message}`)
+  }
+}
+
+function getDriveSecret() {
+  return process.env.ZR_API_SECRET || '486912'
+}
+
+const env = {
+  ZR_API_SECRET: getDriveSecret(),
+  GOOGLE_CLIENT_ID: resolveSecret('zenray-gcal-client-id'),
+  GOOGLE_CLIENT_SECRET: resolveSecret('zenray-gcal-client-secret'),
+  GOOGLE_REFRESH_TOKEN: resolveSecret('zenray-gcal-refresh-token'),
+  DRY_RUN: dryRun ? 'true' : 'false',
+}
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+async function runOne(forceFull = false) {
+  const t0 = process.cpuUsage()
+  const w0 = performance.now()
+  const summary = await tick(env, {
+    forceFull,
+    dryRun,
+    state: localState,
+  })
+  const cpu = process.cpuUsage(t0)
+  const cpuMs = Math.round((cpu.user + cpu.system) / 1000)
+  const wallMs = Math.round(performance.now() - w0)
+  return { ...summary, cpuMs, wallMs }
+}
+
+async function runBench(count = 5) {
+  console.log(`Running benchmark (${count} ticks, local Mac CPU)...`)
+  const results = []
+  for (let i = 0; i < count; i++) {
+    const res = await runOne(i === 0)
+    results.push(res)
+    console.log(`Tick ${i + 1}: mode=${res.mode}, cpu=${res.cpuMs}ms, wall=${res.wallMs}ms, subrequests=${res.subrequests}`)
+    if (i < count - 1) await sleep(500)
+  }
+  const avgCpu = Math.round(results.reduce((acc, r) => acc + r.cpuMs, 0) / results.length)
+  const fastTicks = results.filter((r) => r.mode === 'idle')
+  const avgFastCpu = fastTicks.length
+    ? Math.round(fastTicks.reduce((acc, r) => acc + r.cpuMs, 0) / fastTicks.length)
+    : avgCpu
+  console.log(`Benchmark finished: average CPU=${avgCpu}ms, fast path idle CPU=${avgFastCpu}ms`)
+}
+
+async function main() {
+  if (bench) {
+    await runBench(5)
+    return
+  }
+
+  if (once) {
+    const res = await runOne(full)
+    console.log(JSON.stringify(res, null, 2))
+    return
+  }
+
+  console.log(`ZenRay Plan <-> Google Calendar sync daemon started (interval=${intervalSec}s, dryRun=${dryRun})`)
+  let tickCount = 0
+
+  while (true) {
+    try {
+      tickCount++
+      const res = await runOne(tickCount === 1 || full)
+      const nowStr = new Date().toISOString()
+      if (res.mode !== 'idle' || res.ops > 0 || res.saved || tickCount % 10 === 0) {
+        console.log(`[${nowStr}] mode=${res.mode} ops=${res.ops || 0} saved=${Boolean(res.saved)} cpu=${res.cpuMs}ms wall=${res.wallMs}ms`)
+      }
+    } catch (err) {
+      console.error(`[${new Date().toISOString()}] Sync error:`, err.message)
+    }
+    await sleep(intervalSec * 1000)
+  }
+}
+
+main().catch((err) => {
+  console.error('Fatal error in sync daemon:', err)
+  process.exit(1)
+})

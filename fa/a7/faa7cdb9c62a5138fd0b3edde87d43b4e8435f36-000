@@ -1,0 +1,133 @@
+import React from 'react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { THEMES } from '../../src/theme.js'
+import { ActionColumnMenu, ActionColumnPopover } from '../../src/components/ActionColumnMenu.jsx'
+import { ColumnMenuColumn, ColumnMenuShell } from '../../src/components/ColumnMenu.jsx'
+
+const t = THEMES.light
+
+afterEach(cleanup)
+
+function columns(count, width = 238) {
+  return Array.from({ length: count }, (_, index) => (
+    <ColumnMenuColumn key={index} t={t} width={width} index={index} label={`Colonne ${index + 1}`}>
+      <button type="button">Item {index + 1}</button>
+    </ColumnMenuColumn>
+  ))
+}
+
+describe('ColumnMenuShell', () => {
+  it('garde la première colonne ancrée et borne toute la coque dans le viewport', () => {
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 800 })
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 600 })
+
+    const { rerender } = render(
+      <ColumnMenuShell t={t} anchor={{ left: 100, top: 80, triggerTop: 40 }} onClose={() => {}} columns={columns(1)} />,
+    )
+    const menu = screen.getByRole('menu')
+    expect(menu.style.left).toBe('100px')
+    expect(menu.style.width).toBe('238px')
+
+    rerender(
+      <ColumnMenuShell t={t} anchor={{ left: 100, top: 80, triggerTop: 40 }} onClose={() => {}} columns={columns(3)} />,
+    )
+    expect(menu.style.left).toBe('100px')
+    expect(menu.style.width).toBe('688px')
+    expect(Number.parseFloat(menu.style.left) + Number.parseFloat(menu.style.width)).toBeLessThanOrEqual(788)
+  })
+
+  it('révèle automatiquement la nouvelle colonne sans déplacer la coque', async () => {
+    const { rerender } = render(
+      <ColumnMenuShell t={t} anchor={{ left: 12, top: 60, triggerTop: 30 }} onClose={() => {}} columns={columns(1)} />,
+    )
+    const scroller = document.querySelector('[data-zr-column-scroll]')
+    Object.defineProperty(scroller, 'scrollWidth', { configurable: true, value: 476 })
+    Object.defineProperty(scroller, 'clientWidth', { configurable: true, value: 238 })
+    Object.defineProperty(scroller, 'scrollLeft', { configurable: true, writable: true, value: 0 })
+    rerender(
+      <ColumnMenuShell t={t} anchor={{ left: 12, top: 60, triggerTop: 30 }} onClose={() => {}} columns={columns(2)} />,
+    )
+    await waitFor(() => expect(scroller.scrollLeft).toBeGreaterThan(0))
+  })
+})
+
+describe('ActionColumnMenu', () => {
+  it('accole la première colonne au trigger droit sans la déplacer', () => {
+    render(
+      <ActionColumnMenu
+        t={t}
+        trigger="Ouvrir"
+        align="right"
+        ariaLabel="Actions alignées"
+        nodes={[{ id: 'root', label: 'Racine', children: [{ id: 'leaf', label: 'Feuille' }] }]}
+      />,
+    )
+    const trigger = screen.getByRole('button', { name: 'Actions alignées' })
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({ left: 660, right: 700, top: 20, bottom: 52, width: 40, height: 32, x: 660, y: 20, toJSON: () => ({}) })
+    fireEvent.click(trigger)
+    const menu = screen.getByRole('menu', { name: 'Actions alignées' })
+    expect(menu.style.left).toBe('462px')
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Racine' }))
+    expect(menu.style.left).toBe('462px')
+    expect(menu.style.width).toBe('326px')
+  })
+
+  it('navigue uniquement au clic, exécute la feuille puis ferme', () => {
+    const action = vi.fn()
+    render(
+      <ActionColumnMenu
+        t={t}
+        trigger="Ouvrir"
+        ariaLabel="Actions test"
+        nodes={[
+          { id: 'organize', label: 'Organiser', children: [{ id: 'rename', label: 'Renommer', action }] },
+        ]}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Actions test' }))
+    const branch = screen.getByRole('menuitem', { name: 'Organiser' })
+    fireEvent.pointerEnter(branch)
+    expect(screen.queryByRole('menuitem', { name: 'Renommer' })).not.toBeInTheDocument()
+
+    fireEvent.click(branch)
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Renommer' }))
+    expect(action).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it('laisse une action keepOpen ouverte', () => {
+    const action = vi.fn()
+    render(
+      <ActionColumnMenu
+        t={t}
+        trigger="Ouvrir"
+        ariaLabel="Actions persistantes"
+        nodes={[{ id: 'toggle', label: 'Afficher', action, keepOpen: true }]}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Actions persistantes' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Afficher' }))
+    expect(action).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+  })
+
+  it('fonctionne sans trigger comme popover contrôlé de clic droit', () => {
+    const onClose = vi.fn()
+    render(
+      <ActionColumnPopover
+        t={t}
+        open
+        anchor={{ left: 240, top: 180, triggerTop: 180 }}
+        onClose={onClose}
+        ariaLabel="Menu contextuel"
+        nodes={[{ id: 'open', label: 'Ouvrir', action: vi.fn() }]}
+      />,
+    )
+    expect(screen.getByRole('menu', { name: 'Menu contextuel' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Menu contextuel' })).not.toBeInTheDocument()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onClose).toHaveBeenCalledTimes(1)
+  })
+})

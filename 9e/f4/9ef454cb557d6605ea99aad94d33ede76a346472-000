@@ -1,0 +1,35 @@
+// google.js (17 October 2026): thin Google Calendar REST client on top of `fetch` (injected, so tests never touch the network).
+// FR : client Google Calendar minimal ; fetch injecte pour que les tests n'appellent jamais le reseau.
+export const EVENT_FIELDS = 'id,status,summary,description,start,end,eventType,organizer/self,locked,iCalUID,extendedProperties/private'
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+export async function accessToken(env, fetchImpl) {
+  for (const k of ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_REFRESH_TOKEN']) if (!env[k]) throw new Error(`missing secret ${k}`)
+  const r = await fetchImpl('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET, refresh_token: env.GOOGLE_REFRESH_TOKEN, grant_type: 'refresh_token' }) })
+  const j = await r.json().catch(() => ({}))
+  if (!j.access_token) throw new Error('Google token refresh failed: ' + (j.error_description || j.error || r.status))
+  return j.access_token
+}
+
+export function createGoogle({ fetchImpl, token, calendarId }) {
+  const base = `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/`
+  async function call(method, path, { query, body, okStatuses = [] } = {}) {
+    const url = new URL(base + path)
+    for (const [k, v] of Object.entries(query || {})) if (v !== undefined) url.searchParams.set(k, String(v))
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const r = await fetchImpl(url.toString(), { method, headers: { authorization: 'Bearer ' + token, ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined })
+      if ((r.status === 429 || r.status >= 500) && attempt === 0) { await sleep(500); continue } // one retry only: subrequests are capped at 50 per run / un seul essai de plus
+      if (r.ok || okStatuses.includes(r.status)) return { status: r.status, json: r.status === 204 ? null : await r.json().catch(() => null) }
+      throw new Error(`Google ${method} ${path} -> ${r.status} ${(await r.text().catch(() => '')).slice(0, 200)}`)
+    }
+  }
+  return {
+    async list(query) { const { json } = await call('GET', 'events', { query: { singleEvents: true, maxResults: 2500, ...query } }); return json || { items: [] } },
+    async get(id) { const { status, json } = await call('GET', `events/${encodeURIComponent(id)}`, { query: { fields: EVENT_FIELDS }, okStatuses: [404, 410] }); return status === 200 ? json : { id, status: 'cancelled' } },
+    insert: (body) => call('POST', 'events', { query: { sendUpdates: 'none' }, body, okStatuses: [409] }),
+    patch: (id, body) => call('PATCH', `events/${encodeURIComponent(id)}`, { query: { sendUpdates: 'none' }, body }),
+    revive: (id, body) => call('PUT', `events/${encodeURIComponent(id)}`, { query: { sendUpdates: 'none' }, body: { ...body, status: 'confirmed' } }),
+    remove: (id) => call('DELETE', `events/${encodeURIComponent(id)}`, { query: { sendUpdates: 'none' }, okStatuses: [404, 410] }),
+  }
+}

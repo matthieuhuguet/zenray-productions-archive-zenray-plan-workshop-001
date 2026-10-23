@@ -1,0 +1,49 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import rawProxyHandler, { parsePrivatePosterUrl } from '../../server/raw-proxy.js'
+
+const COMMIT = 'a'.repeat(40)
+const HASH = 'b'.repeat(64)
+const valid = `https://raw.githubusercontent.com/matthieuhuguet/zenrayshards-vid-a1b2c3d4/${COMMIT}/${HASH.slice(0, 2)}/${HASH.slice(2, 4)}/${HASH}.jpg`
+
+function response() {
+  return {
+    statusCode: 0, body: null, headers: {},
+    status(code) { this.statusCode = code; return this },
+    end() { return this },
+    send(body) { this.body = body; return this },
+    setHeader(name, value) { this.headers[name] = value },
+  }
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
+})
+
+describe('raw poster proxy', () => {
+  it('only parses a pinned hashed image from a private ZenRay shard', () => {
+    expect(parsePrivatePosterUrl(valid)?.toString()).toBe(valid)
+    expect(parsePrivatePosterUrl(`https://raw.githubusercontent.com/matthieuhuguet/Memory/${COMMIT}/Identity/Matthieu1.md`)).toBeNull()
+    expect(parsePrivatePosterUrl(`https://raw.githubusercontent.com/matthieuhuguet/zenrayshards-vid-a1b2c3d4/main/${HASH.slice(0, 2)}/${HASH.slice(2, 4)}/${HASH}.jpg`)).toBeNull()
+    expect(parsePrivatePosterUrl(`${valid}?leak=1`)).toBeNull()
+  })
+
+  it('never falls back to the broad GitHub token', async () => {
+    vi.stubEnv('GITHUB_TOKEN', 'broad-token')
+    vi.stubEnv('ZENRAY_RAW_TOKEN', '')
+    const res = response()
+    await rawProxyHandler({ method: 'GET', query: { u: valid } }, res)
+    expect(res.statusCode).toBe(503)
+  })
+
+  it('fetches only a validated poster using the dedicated token', async () => {
+    vi.stubEnv('ZENRAY_RAW_TOKEN', 'poster-read-token')
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer })
+    vi.stubGlobal('fetch', fetchMock)
+    const res = response()
+    await rawProxyHandler({ method: 'GET', query: { u: valid } }, res)
+    expect(res.statusCode).toBe(200)
+    expect(fetchMock).toHaveBeenCalledWith(valid, expect.objectContaining({ headers: expect.objectContaining({ Authorization: 'Bearer poster-read-token' }) }))
+    expect(res.headers['Content-Type']).toBe('image/jpeg')
+  })
+})

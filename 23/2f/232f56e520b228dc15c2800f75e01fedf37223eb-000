@@ -1,0 +1,150 @@
+// test-e2e-local.mjs (20 October 2026): end-to-end bidirectional sync test.
+// 1. Creates a task in Plan -> runs sync -> verifies Google Calendar event created.
+// 2. Modifies Google event -> runs sync -> verifies Plan task updated.
+// 3. Deletes task in Plan -> runs sync -> verifies Google event deleted.
+// Cleans up all test entities.
+
+import fs from 'node:fs'
+import path from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { tick } from '../src/tick.js'
+
+const SITE = 'https://zenray-progress.pages.dev'
+const PATH = 'pages/Calendar-76ct/Matthieu2026-l8at.plan.json'
+const SECRET = process.env.ZR_API_SECRET || '486912'
+const H = { 'x-zr-auth': SECRET, 'content-type': 'application/json' }
+
+const k = (service) => execFileSync('security', ['find-generic-password', '-a', 'zenray', '-s', service, '-w'], { encoding: 'utf8' }).trim()
+
+const tokenRes = await (await fetch('https://oauth2.googleapis.com/token', {
+  method: 'POST',
+  headers: { 'content-type': 'application/x-www-form-urlencoded' },
+  body: new URLSearchParams({
+    client_id: k('zenray-gcal-client-id'),
+    client_secret: k('zenray-gcal-client-secret'),
+    refresh_token: k('zenray-gcal-refresh-token'),
+    grant_type: 'refresh_token',
+  }),
+})).json()
+
+const tok = tokenRes.access_token
+if (!tok) throw new Error('Failed to obtain Google token: ' + JSON.stringify(tokenRes))
+
+const G = (method, pathname, body) =>
+  fetch('https://www.googleapis.com/calendar/v3/calendars/primary/' + pathname, {
+    method,
+    headers: { authorization: 'Bearer ' + tok, 'content-type': 'application/json' },
+    body: body ? JSON.stringify(body) : undefined,
+  }).then((r) => (r.status === 204 ? {} : r.json()))
+
+async function readPlan() {
+  const j = await (await fetch(`${SITE}/api/page?action=read&fresh=1&path=${encodeURIComponent(PATH)}`, { headers: H })).json()
+  return { board: JSON.parse(j.markdown), sha: j.sha }
+}
+
+async function mutatePlan(fn) {
+  for (let i = 0; i < 6; i++) {
+    const { board, sha } = await readPlan()
+    fn(board)
+    const r = await (await fetch(`${SITE}/api/page`, {
+      method: 'POST',
+      headers: H,
+      body: JSON.stringify({ action: 'save', path: PATH, markdown: JSON.stringify(board), sha }),
+    })).json()
+    if (r.ok) return r
+    await new Promise((r) => setTimeout(r, 1200))
+  }
+  throw new Error('Plan write failed after 6 attempts')
+}
+
+const env = {
+  ZR_API_SECRET: SECRET,
+  GOOGLE_CLIENT_ID: k('zenray-gcal-client-id'),
+  GOOGLE_CLIENT_SECRET: k('zenray-gcal-client-secret'),
+  GOOGLE_REFRESH_TOKEN: k('zenray-gcal-refresh-token'),
+  DRY_RUN: 'false',
+}
+
+const mockState = {
+  get: async () => null,
+  set: async () => {},
+}
+
+const testId = 'test' + Date.now().toString(36)
+const testDate = '2026-12-28'
+console.log(`Starting E2E Bidirectional Sync Test (id=${testId})...`)
+
+try {
+  // ── Step 1: Create task in Plan -> Sync -> Check Google Calendar
+  console.log('1. Adding task to Plan: "TEST local sync Plan to GCal"...')
+  await mutatePlan((b) => {
+    b.tasks.push({
+      id: testId,
+      title: 'TEST local sync Plan to GCal',
+      date: testDate,
+      startTime: '10:30',
+      durationMin: 90,
+      status: 'planned',
+      note: 'Auto test',
+      images: [],
+      overdueSince: null,
+      doneAt: null,
+      createdAt: new Date().toISOString(),
+    })
+  })
+
+  console.log('Running sync with --apply (forceFull)...')
+  const r1 = await tick(env, { forceFull: true, state: mockState })
+  console.log(`Sync tick 1: mode=${r1.mode}, ops=${r1.ops}, saved=${r1.saved}`)
+
+  const p1 = await readPlan()
+  const t1 = p1.board.tasks.find((t) => t.id === testId)
+  if (!t1?.gcal?.id) throw new Error('Task was not linked to a Google event id in Plan!')
+  console.log(`Task linked to Google event: ${t1.gcal.id}`)
+
+  const g1 = await G('GET', 'events/' + t1.gcal.id)
+  if (g1.status !== 'confirmed') throw new Error(`Google event status expected confirmed, got ${g1.status}`)
+  console.log(`PASS: Google event confirmed at ${g1.start?.dateTime || g1.start?.date}`)
+
+  // ── Step 2: Edit Google event -> Sync -> Check Plan task updated
+  console.log('2. Updating Google event: changing time to 13:30 and summary...')
+  await G('PATCH', 'events/' + t1.gcal.id + '?sendUpdates=none', {
+    summary: 'TEST local sync updated from Google',
+    start: { dateTime: `${testDate}T13:30:00+01:00` },
+    end: { dateTime: `${testDate}T15:00:00+01:00` },
+  })
+
+  console.log('Running sync with --apply (forceFull)...')
+  const r2 = await tick(env, { forceFull: true, state: mockState })
+  console.log(`Sync tick 2: mode=${r2.mode}, ops=${r2.ops}, pulled=${r2.pulled}, saved=${r2.saved}`)
+
+  const p2 = await readPlan()
+  const t2 = p2.board.tasks.find((t) => t.id === testId)
+  if (t2.title !== 'TEST local sync updated from Google' || t2.startTime !== '13:30') {
+    throw new Error(`Plan task was not updated from Google! Got title="${t2.title}", startTime="${t2.startTime}"`)
+  }
+  console.log('PASS: Plan task updated with new title and start time (13:30) from Google Calendar!')
+
+  // ── Step 3: Delete task in Plan -> Sync -> Check Google event deleted
+  console.log('3. Deleting task from Plan...')
+  await mutatePlan((b) => {
+    b.tasks = b.tasks.filter((t) => t.id !== testId)
+  })
+
+  console.log('Running sync with --apply (forceFull)...')
+  const r3 = await tick(env, { forceFull: true, state: mockState })
+  console.log(`Sync tick 3: mode=${r3.mode}, ops=${r3.ops}`)
+
+  const g3 = await G('GET', 'events/' + t1.gcal.id)
+  if (g3.status !== 'cancelled' && g3.status !== 404 && g3.status !== 410 && g3.error?.code !== 404) {
+    throw new Error(`Google event was not cancelled or deleted! Status: ${g3.status}`)
+  }
+  console.log('PASS: Google event cancelled/deleted following Plan task removal!')
+
+  console.log('\n=== ALL BIDIRECTIONAL SYNC TESTS PASSED SUCCESSFULLY! ===')
+} finally {
+  console.log('Cleanup check...')
+  await mutatePlan((b) => {
+    b.tasks = b.tasks.filter((t) => t.id !== testId && !t.title.startsWith('TEST local sync'))
+  })
+}

@@ -1,0 +1,56 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import stream from '../../server/stream.js'
+
+const manifest = {
+  type: 'audio',
+  mediaKind: 'audio',
+  mime: 'audio/mpeg',
+  size: 8,
+  chunkSize: 4,
+  dir: 'content/audio-test',
+  parts: ['part-a', 'part-b'],
+}
+
+function response() {
+  const headers = new Map()
+  return {
+    statusCode: 200,
+    body: null,
+    setHeader: vi.fn((name, value) => headers.set(String(name).toLowerCase(), String(value))),
+    status(code) { this.statusCode = code; return this },
+    send(value) { this.body = value; return this },
+    end() { return this },
+    header(name) { return headers.get(String(name).toLowerCase()) },
+  }
+}
+
+describe('GET /api/stream audio Range', () => {
+  beforeEach(() => {
+    vi.stubEnv('GITHUB_TOKEN', 'test-token')
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+      const value = String(url)
+      if (value.includes('/contents/')) {
+        return { ok: true, json: async () => ({ content: Buffer.from(JSON.stringify(manifest)).toString('base64') }) }
+      }
+      const bytes = value.includes('part-a.bin') ? [0, 1, 2, 3] : [4, 5, 6, 7]
+      return { ok: true, arrayBuffer: async () => Uint8Array.from(bytes).buffer }
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.restoreAllMocks()
+  })
+
+  it('reconstruit exactement les octets demandés et annonce une réponse seekable', async () => {
+    const req = { query: { path: 'pages/Music/test.media.json' }, headers: { range: 'bytes=2-5' } }
+    const res = response()
+
+    await stream(req, res)
+
+    expect(res.statusCode).toBe(206)
+    expect(res.header('accept-ranges')).toBe('bytes')
+    expect(res.header('content-range')).toBe('bytes 2-5/8')
+    expect([...res.body]).toEqual([2, 3, 4, 5])
+  })
+})

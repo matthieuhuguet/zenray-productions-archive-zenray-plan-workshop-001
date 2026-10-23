@@ -1,0 +1,35 @@
+// e2e-cloud.mjs (17 October 2026): REAL end-to-end test of the deployed Worker. Creates a temporary task and a temporary event, edits both, deletes both,
+// and measures how long the Worker takes each time. It does NOT run the sync itself: it only waits for the cron. Mutates the live Plan and calendar for a
+// few minutes and cleans after itself. Usage: ZR_API_SECRET=<code> node workers/plan-gcal/scripts/e2e-cloud.mjs
+// FR : test reel du Worker deploye ; il attend le cron, ne lance aucune synchro lui-meme et nettoie derriere lui.
+import { execFileSync } from 'node:child_process'
+const SITE = 'https://zenray-progress.pages.dev', PATH = 'pages/Calendar-76ct/Matthieu2026-l8at.plan.json'
+const H = { 'x-zr-auth': process.env.ZR_API_SECRET, 'content-type': 'application/json' }
+const k = (s) => execFileSync('security', ['find-generic-password', '-a', 'zenray', '-s', s, '-w'], { encoding: 'utf8' }).trim()
+const tok = (await (await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ client_id: k('zenray-gcal-client-id'), client_secret: k('zenray-gcal-client-secret'), refresh_token: k('zenray-gcal-refresh-token'), grant_type: 'refresh_token' }) })).json()).access_token
+const G = (m, p, b) => fetch('https://www.googleapis.com/calendar/v3/calendars/primary/' + p, { method: m, headers: { authorization: 'Bearer ' + tok, 'content-type': 'application/json' }, body: b ? JSON.stringify(b) : undefined }).then((r) => (r.status === 204 ? {} : r.json()))
+const readPlan = async () => { const j = await (await fetch(`${SITE}/api/page?action=read&fresh=1&path=${encodeURIComponent(PATH)}`, { headers: H })).json(); return { board: JSON.parse(j.markdown), sha: j.sha } }
+async function mutatePlan(fn) { for (let i = 0; i < 6; i++) { const { board, sha } = await readPlan(); fn(board); const r = await (await fetch(`${SITE}/api/page`, { method: 'POST', headers: H, body: JSON.stringify({ action: 'save', path: PATH, markdown: JSON.stringify(board), sha }) })).json(); if (r.ok) return; await new Promise((x) => setTimeout(x, 1500)) } throw new Error('Plan write failed') }
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+async function waitFor(name, check, timeoutS = 200) { const t0 = Date.now(); while ((Date.now() - t0) / 1000 < timeoutS) { const v = await check(); if (v) { const s = Math.round((Date.now() - t0) / 1000); console.log(`PASS ${name} (${s} s)`); return s } await sleep(4000) } console.log(`FAIL ${name} (no result in ${timeoutS} s)`); return null }
+const id = 'e2ecloud' + Date.now().toString(36); let results = []
+const rec = (v) => results.push(v)
+try {
+  await mutatePlan((b) => b.tasks.push({ id, title: 'TEST cloud Plan vers agenda', date: '2026-12-20', startTime: '10:00', durationMin: 30, status: 'planned', note: '', images: [], overdueSince: null, doneAt: null, createdAt: new Date().toISOString() }))
+  let ev
+  rec(await waitFor('Plan task -> Google event', async () => { const t = (await readPlan()).board.tasks.find((x) => x.id === id); if (!t?.gcal?.id) return false; ev = await G('GET', 'events/' + t.gcal.id); return ev.status === 'confirmed' && ev.start.dateTime.startsWith('2026-12-20T10:00:00+01:00') }))
+  const evId = ev?.id
+  await mutatePlan((b) => { const t = b.tasks.find((x) => x.id === id); t.startTime = '11:30'; t.title = 'TEST cloud modifie dans le Plan' })
+  rec(await waitFor('Plan edit -> Google event updated', async () => { const e = await G('GET', 'events/' + evId); return e.summary === 'TEST cloud modifie dans le Plan' && e.start.dateTime.startsWith('2026-12-20T11:30') }))
+  await G('PATCH', 'events/' + evId + '?sendUpdates=none', { summary: 'TEST cloud modifie dans Google', start: { dateTime: '2026-12-21T09:15:00', timeZone: 'Europe/Paris' }, end: { dateTime: '2026-12-21T10:00:00', timeZone: 'Europe/Paris' } })
+  rec(await waitFor('Google edit -> Plan task updated', async () => { const t = (await readPlan()).board.tasks.find((x) => x.id === id); return t.title === 'TEST cloud modifie dans Google' && t.date === '2026-12-21' && t.startTime === '09:15' && t.durationMin === 45 }))
+  const phone = await G('POST', 'events?sendUpdates=none', { summary: 'TEST cloud evenement telephone', start: { dateTime: '2026-12-22T14:00:00', timeZone: 'Europe/Paris' }, end: { dateTime: '2026-12-22T15:00:00', timeZone: 'Europe/Paris' } })
+  rec(await waitFor('new Google event (phone) -> Plan task', async () => (await readPlan()).board.tasks.some((x) => x.gcal?.id === phone.id && x.title === 'TEST cloud evenement telephone' && x.startTime === '14:00')))
+} finally {
+  await mutatePlan((b) => { b.tasks = b.tasks.filter((x) => x.id !== id && !/^TEST cloud/.test(x.title)) })
+  const cleaned = await waitFor('Plan deletion -> Google events removed', async () => { const evs = (await G('GET', 'events?q=TEST%20cloud&singleEvents=true&timeMin=2026-12-01T00:00:00Z&timeMax=2027-01-31T00:00:00Z')).items || []; return evs.length === 0 })
+  rec(cleaned)
+  const left = (await readPlan()).board.tasks.filter((x) => /^TEST cloud/.test(x.title) || x.id === id).length
+  console.log(left === 0 ? 'PASS no test task left in the Plan' : `FAIL ${left} test task(s) left in the Plan`)
+  console.log('latencies (s):', results.join(', '), '| all passed:', results.every((x) => x !== null) && left === 0)
+}

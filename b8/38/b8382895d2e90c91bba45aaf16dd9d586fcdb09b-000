@@ -1,0 +1,16 @@
+import baseConfig from './vitest.config.js'
+
+// 9 October 2026 05:57 CEST: Pages CI runs without this Mac's tools or private skills.
+export default {
+  ...baseConfig,
+  test: {
+    ...baseConfig.test,
+    exclude: [
+      ...baseConfig.test.exclude,
+      'scripts/AssetsFeedbackCapture.test.js',
+      'scripts/AssetsService.test.js',
+      'scripts/img-orientation.test.js',
+      'scripts/Freelance/Notify.test.js',
+    ],
+  },
+}

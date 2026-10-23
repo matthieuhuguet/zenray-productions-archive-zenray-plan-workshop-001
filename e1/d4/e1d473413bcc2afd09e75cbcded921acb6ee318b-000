@@ -1,0 +1,94 @@
+// Thème T-01-3-2 — « Lecture pure » (catalogue 05-THEMES-1024-A, famille 01, sous-famille 3).
+// Calibrage privé : Medium. Signature : mesure 62 signes, aucune décoration, respiration maximale.
+//
+// C'est le PREMIER et pour l'instant le SEUL thème construit. Choisi volontairement :
+// c'est le moins coûteux à produire et à rendre, et le seul dont la V0 a besoin
+// (« une note devient un article publié », 01-PLAN §15).
+//
+// Les sept groupes de décisions de 01-PLAN §10.2 sont tous présents, même quand ils sont vides :
+// un thème d'article assume de n'avoir ni mouvement ni son, et le dit explicitement.
+
+export default {
+  id: 'T-01-3-2',
+  name: 'Lecture pure',
+  description: 'Mesure courte, hiérarchie par la taille seule, respiration maximale. Fait pour être lu jusqu’au bout.',
+  // PRIVÉ — jamais rendu, jamais publié (règle marque, 02-RISQUES R5).
+  calibration: { ref: 'Medium longform', notes: 'Serif de labeur, aucune couleur, aucun filet.' },
+  formats: ['F-web-article', 'F-still-1080x1350', 'F-still-1080x1920', 'F-print-a4'],
+  beatCount: { min: 3, max: 7 },
+
+  // 1. Surface
+  surface: {
+    background: '#ffffff',
+    backgroundDark: '#0f1012',
+    grain: 0.0,
+    vignette: 0,
+    texture: 'none',
+    shadow: 'none',
+  },
+
+  // 2. Palette
+  palette: {
+    ink: 'rgba(20,22,26,.92)',
+    inkDark: 'rgba(244,245,247,.92)',
+    muted: 'rgba(20,22,26,.56)',
+    mutedDark: 'rgba(244,245,247,.54)',
+    rule: 'rgba(20,22,26,.12)',
+    ruleDark: 'rgba(244,245,247,.14)',
+    accent: '#1a1a1a',
+    accentDark: '#f4f5f7',
+    minContrast: 7,
+  },
+
+  // 3. Typographie
+  typography: {
+    body: "'AnthropicSerif', Georgia, 'Times New Roman', serif",
+    display: "'AnthropicSerif', Georgia, serif",
+    mono: "'AnthropicMono', ui-monospace, monospace",
+    // Échelle modulaire, ratio 1.333 (quarte juste), base 19px.
+    scale: { base: 19, ratio: 1.333, steps: { h1: 3, h2: 2, h3: 1, body: 0, small: -1 } },
+    lineHeight: { body: 1.62, display: 1.14 },
+    tracking: { display: '-0.022em', body: '0em', mono: '0.06em' },
+    measure: 62,
+    weights: { body: 400, display: 400, emphasis: 500 },
+    case: { display: 'none', label: 'none' },
+  },
+
+  // 4. Grille
+  grid: {
+    columns: 1,
+    gutter: 0,
+    margin: { top: 96, bottom: 128, sides: 28 },
+    rhythm: 8,
+    align: 'left',
+    maxWidth: 680,
+  },
+
+  // 5. Mouvement — un article ne bouge pas. C'est une décision, pas un oubli.
+  motion: {
+    enabled: false,
+    ease: 'cubic-bezier(.16,1,.3,1)',
+    enter: 0,
+    stagger: 0,
+    cut: 'none',
+  },
+
+  // 6. Habillage
+  chrome: {
+    kicker: true,        // surtitre = rôle du beat d'ouverture
+    byline: true,
+    readingTime: true,
+    rules: false,        // aucun filet
+    dropCap: false,
+    footer: true,
+    numbering: false,
+  },
+
+  // 7. Son — hors périmètre pour ce thème.
+  sound: {
+    bed: null,
+    bedLufs: null,
+    cues: [],
+    allowed: [],
+  },
+}

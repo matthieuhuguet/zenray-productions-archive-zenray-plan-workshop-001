@@ -1,0 +1,25 @@
+// plan.js (17 October 2026): reads and writes the Plan file through the SITE'S OWN API (/api/page), the same read-sha-write protocol as ZenRayPlan.
+// The Worker therefore never touches GitHub directly and holds no GitHub token. / le Worker passe par l'API du site : aucun jeton GitHub.
+export async function readPlan({ fetchImpl, env, runtime }) {
+  const url = `${runtime.siteUrl}/api/page?action=read&fresh=1&path=${encodeURIComponent(runtime.planPath)}`
+  const r = await fetchImpl(url, { headers: { 'x-zr-auth': env.ZR_API_SECRET || '' }, cache: 'no-store' })
+  if (!r.ok) throw new Error(`Plan read failed: HTTP ${r.status}`)
+  const j = await r.json().catch(() => null)
+  // A read that fails is NEVER an empty Plan (same rule as ZenRayPlan's readPlanState). / une lecture qui echoue n'est JAMAIS un plan vide.
+  if (!j || j.missing || typeof j.markdown !== 'string' || !j.sha) throw new Error('Plan read failed: unexpected response')
+  return { markdown: j.markdown, sha: j.sha }
+}
+export function parseBoard(markdown) {
+  const board = JSON.parse(markdown)
+  if (!board || board.type !== 'plan' || !Array.isArray(board.tasks)) throw new Error('not a Plan file')
+  return board
+}
+export async function savePlan({ fetchImpl, env, runtime, markdown, sha }) {
+  if (markdown.length > runtime.planMaxBytes) throw new Error(`Plan would exceed ${runtime.planMaxBytes} bytes: GitHub reads files over 1 MiB as empty`)
+  const r = await fetchImpl(`${runtime.siteUrl}/api/page`, { method: 'POST', headers: { 'x-zr-auth': env.ZR_API_SECRET || '', 'content-type': 'application/json' },
+    body: JSON.stringify({ action: 'save', path: runtime.planPath, markdown, sha }) })
+  const j = await r.json().catch(() => null)
+  if (j && j.ok) return { ok: true, sha: j.sha }
+  if (j && j.conflict) return { ok: false, conflict: true }
+  throw new Error('Plan save failed: ' + ((j && (j.error || j.detail)) || `HTTP ${r.status}`))
+}

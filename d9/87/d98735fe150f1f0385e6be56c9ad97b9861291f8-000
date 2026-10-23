@@ -1,0 +1,97 @@
+import { createHash } from 'node:crypto'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import shareTokenHandler, {
+  authorizeShareAccess,
+  createSignedShareToken,
+  isShareTarget,
+  resolveShareToken,
+  shareRecordPath,
+  verifySignedShareToken,
+} from '../../server/share-token.js'
+
+const SECRET = 'test-secret-that-is-long-and-stable'
+const hash = (value) => createHash('sha256').update(value).digest('hex')
+const legacy = (value) => Buffer.from(value, 'utf8').toString('base64url')
+
+function response() {
+  return {
+    statusCode: 0, body: null, headers: {},
+    status(code) { this.statusCode = code; return this },
+    json(body) { this.body = body; return this },
+    setHeader(name, value) { this.headers[name] = value },
+  }
+}
+
+afterEach(() => {
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
+})
+
+describe('signed and revocable share tokens', () => {
+  it('is opaque, signed and rejects a one-byte modification', () => {
+    const token = createSignedShareToken(SECRET, Buffer.alloc(24, 7))
+    expect(token).toMatch(/^zrs1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/)
+    expect(token).not.toContain('pages')
+    expect(verifySignedShareToken(token, SECRET)).toBe(true)
+    expect(verifySignedShareToken(`${token.slice(0, -1)}x`, SECRET)).toBe(false)
+  })
+
+  it('resolves an active record and enforces folder scope', async () => {
+    const token = createSignedShareToken(SECRET, Buffer.alloc(24, 8))
+    const record = {
+      v: 1, tokenHash: hash(token), kind: 'folder', path: 'pages/Photos/Trip',
+      createdAt: new Date(0).toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(), revokedAt: null,
+    }
+    const options = { secret: SECRET, loadRecord: async () => record }
+    await expect(resolveShareToken(token, options)).resolves.toMatchObject({ path: record.path, legacy: false })
+    await expect(authorizeShareAccess(token, 'pages/Photos/Trip/image.jpg.img.json', options)).resolves.toBe(true)
+    await expect(authorizeShareAccess(token, 'pages/Photos/Other/image.jpg.img.json', options)).resolves.toBe(false)
+  })
+
+  it('rejects expired and revoked records', async () => {
+    const token = createSignedShareToken(SECRET, Buffer.alloc(24, 9))
+    const base = { v: 1, tokenHash: hash(token), kind: 'image', path: 'pages/Photos/a.jpg.img.json', createdAt: new Date(0).toISOString() }
+    await expect(resolveShareToken(token, { secret: SECRET, now: 10, loadRecord: async () => ({ ...base, expiresAt: new Date(9).toISOString(), revokedAt: null }) })).rejects.toMatchObject({ code: 'share-expired', status: 410 })
+    await expect(resolveShareToken(token, { secret: SECRET, loadRecord: async () => ({ ...base, expiresAt: new Date(Date.now() + 60_000).toISOString(), revokedAt: new Date().toISOString() }) })).rejects.toMatchObject({ code: 'share-revoked', status: 410 })
+  })
+
+  it('rejects unsigned historical base64 links unless an explicit migration gate is enabled', async () => {
+    const token = legacy('pages/Photos/Legacy')
+    await expect(resolveShareToken(token, { expectedKind: 'folder' })).rejects.toMatchObject({ code: 'invalid-share' })
+    await expect(resolveShareToken(token, { expectedKind: 'folder', allowLegacy: true })).resolves.toMatchObject({ legacy: true, path: 'pages/Photos/Legacy' })
+    await expect(authorizeShareAccess(token, 'pages/Photos/Legacy/a.jpg.img.json', { allowLegacy: true })).resolves.toBe(true)
+    await expect(authorizeShareAccess(token, 'pages/Photos/Elsewhere/a.jpg.img.json', { allowLegacy: true })).resolves.toBe(false)
+  })
+
+  it('rejects ambiguous query, fragment, encoding and traversal share targets', () => {
+    expect(isShareTarget('image', 'pages/Photos/a.img.json?path=other')).toBe(false)
+    expect(isShareTarget('image', 'pages/Photos/a.img.json#other')).toBe(false)
+    expect(isShareTarget('folder', 'pages/Photos%2FPrivate')).toBe(false)
+    expect(isShareTarget('folder', 'pages/Photos//Private')).toBe(false)
+    expect(isShareTarget('folder', 'pages/Photos/../Private')).toBe(false)
+  })
+
+  it('persists issue records under a hash-only path through the API', async () => {
+    vi.stubEnv('ZENRAY_SHARE_SECRET', SECRET)
+    vi.stubEnv('GITHUB_TOKEN', 'github-test-token')
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 201, json: async () => ({ content: { sha: 'commit' } }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const res = response()
+    await shareTokenHandler({ method: 'POST', body: { action: 'issue', kind: 'video', path: 'pages/Videos/demo.mp4.media.json', expiresInSeconds: 600 }, query: {} }, res)
+
+    expect(res.statusCode).toBe(201)
+    expect(verifySignedShareToken(res.body.token, SECRET)).toBe(true)
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(url).toContain(shareRecordPath(res.body.token))
+    expect(url).not.toContain('demo')
+    const stored = JSON.parse(Buffer.from(JSON.parse(init.body).content, 'base64').toString('utf8'))
+    expect(stored).toMatchObject({ kind: 'video', path: 'pages/Videos/demo.mp4.media.json', revokedAt: null })
+    expect(stored.tokenHash).toBe(hash(res.body.token))
+
+    const revokeRes = response()
+    await shareTokenHandler({ method: 'POST', body: { action: 'revoke', token: res.body.token }, query: {} }, revokeRes)
+    expect(revokeRes.statusCode).toBe(200)
+    const revoked = JSON.parse(Buffer.from(JSON.parse(fetchMock.mock.calls[1][1].body).content, 'base64').toString('utf8'))
+    expect(revoked.revokedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/)
+  })
+})

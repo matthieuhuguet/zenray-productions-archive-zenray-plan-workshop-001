@@ -1,0 +1,12 @@
+import { describe, expect, it } from 'vitest'
+import { isPublicReadRoute } from '../../api/[...route].js'
+
+describe('API public route policy', () => {
+  it('permits DOM reads but never anonymous media/img writes', () => {
+    expect(isPublicReadRoute({ method: 'GET' }, 'img')).toBe(true)
+    expect(isPublicReadRoute({ method: 'HEAD' }, 'raw-proxy')).toBe(true)
+    expect(isPublicReadRoute({ method: 'POST' }, 'img')).toBe(false)
+    expect(isPublicReadRoute({ method: 'GET' }, 'media')).toBe(false)
+    expect(isPublicReadRoute({ method: 'POST' }, 'media')).toBe(false)
+  })
+})

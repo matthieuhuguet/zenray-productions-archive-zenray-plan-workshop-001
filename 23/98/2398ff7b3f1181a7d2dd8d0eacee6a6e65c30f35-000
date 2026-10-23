@@ -1,0 +1,109 @@
+// LES DEUX HÉBERGEURS DOIVENT DIRE LA MÊME CHOSE.
+//
+// `vercel.json` et `public/_headers` décrivent la même politique de sécurité pour deux plateformes.
+// Rien n'oblige techniquement à les tenir égaux, et c'est précisément le danger : une politique
+// modifiée d'un seul côté ne casse rien, ne se voit nulle part, et n'apparaît que le jour où l'on
+// bascule sur l'hébergeur qu'on ne regardait pas. Ce test rend la divergence impossible à ignorer.
+import { describe, it, expect } from 'vitest'
+import { readFileSync, existsSync } from 'node:fs'
+
+const vercel = JSON.parse(readFileSync('vercel.json', 'utf8'))
+const headers = existsSync('public/_headers') ? readFileSync('public/_headers', 'utf8') : ''
+const redirects = existsSync('public/_redirects') ? readFileSync('public/_redirects', 'utf8') : ''
+
+const enTeteVercel = (source, cle) => {
+  const bloc = vercel.headers.find((b) => b.source === source)
+  return bloc?.headers.find((h) => h.key === cle)?.value
+}
+
+describe('parité Vercel / Cloudflare', () => {
+  it('porte la même politique de sécurité du contenu des deux côtés', () => {
+    const csp = enTeteVercel('/(.*)', 'Content-Security-Policy-Report-Only')
+    expect(csp, 'CSP absente de vercel.json').toBeTruthy()
+    expect(headers, 'CSP absente ou différente dans public/_headers').toContain(csp)
+  })
+
+  it('porte les mêmes en-têtes de sécurité', () => {
+    for (const cle of ['X-Content-Type-Options', 'Referrer-Policy', 'Strict-Transport-Security', 'Permissions-Policy']) {
+      const valeur = enTeteVercel('/(.*)', cle)
+      expect(headers, `${cle} diffère entre vercel.json et _headers`).toContain(`${cle}: ${valeur}`)
+    }
+  })
+
+  it('interdit le cache sur index.html des deux côtés', () => {
+    // Un index.html caché sert des URL d'assets qui n'existent plus après un build : l'application
+    // s'ouvre sur une page blanche. Incident réel du 2026-06-01.
+    expect(enTeteVercel('/index.html', 'Cache-Control')).toContain('no-store')
+    expect(headers).toMatch(/\/index\.html\n\s+Cache-Control: no-cache, no-store, must-revalidate/)
+  })
+
+  it('reprend chaque réécriture de vercel.json, en _redirects OU en Function', () => {
+    // CE TEST A ATTRAPÉ UN VRAI DÉFAUT LE 2026-08-05, et il faut dire lequel plutôt que de l'assouplir
+    // en silence. Les trois routes de partage étaient bien recopiées dans `_redirects`, à l'identique
+    // de vercel.json — la parité, au sens du texte, était tenue. Mais une réécriture `_redirects` de
+    // Cloudflare Pages ne sert QUE des fichiers statiques : elle ne déclenche jamais une Function.
+    // `/folder` retombait donc sur le repli `/* /index.html` et l'aperçu de lien partagé rendait
+    // l'index brut, sans une seule balise Open Graph.
+    //
+    // La parité ne se vérifie donc plus sur le TEXTE de la règle mais sur le fait que la route soit
+    // RÉELLEMENT SERVIE, par l'un des deux moyens que Cloudflare exécute vraiment : un fichier de
+    // fonction à son nom, ou une réécriture statique.
+    for (const r of vercel.rewrites) {
+      if (r.source.startsWith('/((?!')) continue // le repli d'application à page unique, écrit autrement
+      const nom = r.source.replace(/^\//, '')
+      const parFonction = existsSync(`functions/${nom}.js`)
+      if (parFonction) {
+        // Une route servie par une Function doit AUSSI être déclarée dans `_routes.json`, sans quoi
+        // Cloudflare sert l'asset statique sans jamais invoquer la fonction.
+        expect(JSON.parse(readFileSync('public/_routes.json', 'utf8')).include,
+          `route ${r.source} servie par une Function mais absente de _routes.json`).toContain(r.source)
+        continue
+      }
+      expect(redirects, `réécriture ${r.source} : ni Function functions/${nom}.js, ni règle _redirects`).toContain(r.source)
+      expect(redirects).toContain(r.destination)
+    }
+  })
+
+  it('les trois routes de partage sont servies par une Function, jamais par une réécriture', () => {
+    // Le piège est asymétrique : une règle `_redirects` vers `/api/...` a l'air juste et ne fait
+    // rien. On interdit donc explicitement son retour.
+    for (const route of ['watch', 'view', 'folder']) {
+      expect(existsSync(`functions/${route}.js`), `functions/${route}.js manquant`).toBe(true)
+      expect(redirects, `/${route} ne doit plus être réécrit dans _redirects : ça ne déclenche aucune Function`)
+        .not.toMatch(new RegExp(`^/${route}\\s`, 'm'))
+    }
+  })
+
+  it('ne fait passer par la fonction que les routes qui en ont besoin', () => {
+    // Sans cette restriction, CHAQUE requête statique consommerait une invocation. C'est la version
+    // Cloudflare du piège qui a fait exploser le compteur d'origine chez Vercel.
+    const routes = JSON.parse(readFileSync('public/_routes.json', 'utf8'))
+    expect(routes.include).toContain('/api/*')
+    expect(routes.include).not.toContain('/*')
+  })
+
+  it('aucun handler n’importe un module Node sans le préfixe `node:`', async () => {
+    // Attrapé le 2026-07-31 par `wrangler pages functions build`, sur `server/cmdlog.js` : la forme
+    // nue `from 'crypto'` se résout sous Node et NE SE RÉSOUT PAS sur Workers, où l'assemblage
+    // échoue. Une seule occurrence suffisait à faire échouer tout le déploiement, et rien dans le
+    // code ne la distinguait des vingt-deux autres imports corrects.
+    const { execFileSync } = await import('node:child_process')
+    const sortie = execFileSync('bash', ['-c',
+      `grep -rnE "from '(crypto|fs|path|url|os|stream|buffer|util|zlib|http|https|events|child_process)'" server api functions 2>/dev/null || true`,
+    ], { encoding: 'utf8' }).trim()
+    expect(sortie).toBe('')
+  })
+
+  it('aucun module de `server/` n’évalue `import.meta.url` au chargement', async () => {
+    // A fait échouer le premier déploiement Cloudflare le 2026-07-31. Dans le Worker assemblé,
+    // `import.meta.url` vaut `undefined` ; un `fileURLToPath` exécuté au niveau module jette donc à
+    // l'initialisation et emporte les quarante-quatre handlers d'un coup. À l'intérieur d'une
+    // fonction, la même ligne est inoffensive tant qu'elle n'est pas appelée.
+    const { execFileSync } = await import('node:child_process')
+    const fautifs = execFileSync('bash', ['-c',
+      // 14 October 2026: test files are never bundled into the Worker, only modules are checked.
+      `grep -rn --exclude="*.test.js" --exclude="*.test.mjs" "^[^ \t/*].*import\\.meta\\.url" server api 2>/dev/null || true`,
+    ], { encoding: 'utf8' }).trim()
+    expect(fautifs).toBe('')
+  })
+})

@@ -1,0 +1,18 @@
+// index.js (17 October 2026): Cloudflare Worker entry. Cron trigger every minute; no public route (workers.dev disabled).
+// FR : point d'entree du Worker. Declencheur toutes les minutes, aucune route publique.
+import { tick } from './tick.js'
+
+const kvState = (kv) => ({ get: () => kv.get('state', 'json'), set: (value) => kv.put('state', JSON.stringify(value)) })
+
+export default {
+  async scheduled(event, env) {
+    try {
+      const summary = await tick(env, { now: new Date(event.scheduledTime), state: env.STATE ? kvState(env.STATE) : undefined })
+      console.log(JSON.stringify({ planGcal: summary }))
+    } catch (error) {
+      console.error(JSON.stringify({ planGcal: 'error', message: String(error && error.message) }))
+      throw error
+    }
+  },
+  async fetch() { return new Response('Not found', { status: 404 }) },
+}

@@ -1,0 +1,829 @@
+// ZenRayMedia — protocole de vérification des couches pures (L0, L3, L5, L6, L11).
+// Ces tests gardent les règles qui, si elles cassent, cassent tout le produit en silence.
+
+import { describe, it, expect } from 'vitest'
+import { validate, isValid, sentenceCount, rng, emptyBrief, makeId, checksumOf, DOCUMENT_SCHEMA_VERSION } from './contracts.js'
+import { FORMATS, getFormat, durationOf, beatDuration, isTemporal } from './formats.js'
+import { buildCut, refitCut, moveBeat, mergeBeats, splitBeat, addBeat, removeBeat, updateBeat, roleForPosition, addSlot, removeSlot, moveSlot, slotsWeight, countSlots, MAX_SLOTS } from './cut.js'
+import { toMarkdown, publishPathFor, pageUrlFor } from './publish.js'
+import { compile, readingTimeOf, shrinkFactor, visibleBeats, omittedCount, nextShrink, MIN_SHRINK } from './compile.js'
+import { renderTemplate, escapeHtml, inspectTemplate } from './htmlTemplate.js'
+import { contrastRatio, parseColor, inspectStatic, summarize, SEVERITY } from './critic.js'
+import { ffmpegCommand, forgePlan, formatBytes } from './forge.js'
+import { declensionTree, declensionSummary, trimAdvice, DECLENSION_GROUPS } from './declensions.js'
+import { parseThemeFileName, parseThemeId } from './taxonomy.js'
+import { readThemeHeader } from './themes/registry.js'
+import { FONTS, fontStack, fontFaceCss, fontsOfArchetype, missingFamilies, fontsWeight } from './fonts.js'
+import { SUBFAMILY_FONTS, defaultFontFor, subfamiliesUsing } from './themeFonts.js'
+import theme from './themes/T-01-3-2.theme.js'
+import { seedProject, SEED_NOTES, nextProjectSerial } from './store.js'
+
+const webFormat = getFormat('F-web-article')
+const verticalFormat = getFormat('F-still-1080x1920')
+const overlayFormat = getFormat('F-overlay-1920x1080')
+
+function fixture() {
+  const { brief, notes } = seedProject()
+  const cut = buildCut(brief, notes, theme)
+  return { brief, notes, cut }
+}
+
+describe('L0 — contrats', () => {
+  it('refuse un message à deux phrases', () => {
+    const brief = { ...emptyBrief(), id: 'b', title: 'T', audience: 'A', message: 'Une phrase. Puis une autre.' }
+    const errors = validate('brief', brief)
+    expect(errors.some((e) => e.code === 'single-sentence')).toBe(true)
+  })
+
+  it('accepte une phrase avec des abréviations', () => {
+    expect(sentenceCount('Cf. le plan, M. Dupont a raison')).toBe(1)
+    expect(sentenceCount('Deux phrases. Vraiment deux.')).toBe(2)
+  })
+
+  it('refuse un job sans graine', () => {
+    expect(validate('job', { cutId: 'c', themeId: 't', formatId: 'f' }).some((e) => e.field === 'seed')).toBe(true)
+    expect(isValid('job', { cutId: 'c', themeId: 't', formatId: 'f', seed: 1 })).toBe(true)
+  })
+
+  it('refuse un livrable sans sonde ni empreinte', () => {
+    const errors = validate('deliverable', { jobId: 'j', bytes: 10 })
+    expect(errors.map((e) => e.field).sort()).toEqual(['checksum', 'probe'])
+  })
+
+  it('refuse un thème dont un champ public porte une marque', () => {
+    const leaky = { ...theme, name: 'Style BFM' }
+    expect(validate('theme', leaky).some((e) => e.code === 'trademark')).toBe(true)
+  })
+
+  it('rng est déterministe et makeId stable', () => {
+    const a = Array.from({ length: 5 }, rng(42))
+    const b = Array.from({ length: 5 }, rng(42))
+    expect(a).toEqual(b)
+    expect(a).not.toEqual(Array.from({ length: 5 }, rng(43)))
+    expect(makeId('x', 'abc', 1)).toBe(makeId('x', 'abc', 1))
+    expect(makeId('x', 'abc', 1)).not.toBe(makeId('x', 'abc', 2))
+    expect(checksumOf('abc')).toBe(checksumOf('abc'))
+  })
+})
+
+// AUDIT T2 · les quatre contrats que 06-BACKLOG-PRIORISE.md exige avant R3 (migrations) et V1
+// (modèle Page canonique) : Document V3, Theme Package, Artifact, Publication. Écrits ici en CODE
+// (schémas + validateurs + tests), pas en document séparé — cohérent avec « tu génères uniquement
+// le code » et avec le validateur unique déjà en place pour les six contrats L0 ci-dessus.
+describe('T2 — contrats Document V3 / Theme Package / Artifact / Publication', () => {
+  it('un document complet est valide ; l’identité, la révision et l’empreinte enregistrée sont obligatoires', () => {
+    const doc = { documentId: 'doc-1', schemaVersion: DOCUMENT_SCHEMA_VERSION, revisionId: 'rev-1', savedHash: 'h1' }
+    expect(isValid('document', doc)).toBe(true)
+    expect(validate('document', { schemaVersion: 3, revisionId: 'r', savedHash: 'h' }).some((e) => e.field === 'documentId')).toBe(true)
+    expect(validate('document', { documentId: 'd', revisionId: 'r', savedHash: 'h' }).some((e) => e.field === 'schemaVersion')).toBe(true)
+    expect(validate('document', { documentId: 'd', schemaVersion: 3, savedHash: 'h' }).some((e) => e.field === 'revisionId')).toBe(true)
+    expect(validate('document', { documentId: 'd', schemaVersion: 3, revisionId: 'r' }).some((e) => e.field === 'savedHash')).toBe(true)
+  })
+
+  it('un chemin Create sans SHA de base est refusé : l’association appartient au document, jamais à un état global', () => {
+    const doc = { documentId: 'd', schemaVersion: 3, revisionId: 'r', savedHash: 'h', createPath: 'Media/x.zmedia.json' }
+    expect(validate('document', doc).some((e) => e.field === 'createSha')).toBe(true)
+    expect(isValid('document', { ...doc, createSha: 'sha1' })).toBe(true)
+    // Jamais enregistré dans Create : createPath/createSha absents reste un document VALIDE.
+    expect(isValid('document', { documentId: 'd', schemaVersion: 3, revisionId: 'r', savedHash: 'h' })).toBe(true)
+  })
+
+  it('un paquet de thème complet est valide ; polices et droits d’usage sont obligatoires', () => {
+    const pkg = { id: 'T-01-3-2', packageVersion: '1', pieces: [], props: {}, assets: [], fonts: ['Anthropic Sans'], license: 'interne', compatibleFormats: ['F-web-article'] }
+    expect(isValid('themePackage', pkg)).toBe(true)
+    expect(validate('themePackage', { ...pkg, fonts: [] }).some((e) => e.field === 'fonts')).toBe(true)
+    expect(validate('themePackage', { ...pkg, license: '' }).some((e) => e.field === 'license')).toBe(true)
+    expect(validate('themePackage', { ...pkg, id: 'pas-un-identifiant' }).some((e) => e.field === 'id')).toBe(true)
+  })
+
+  it('un artefact PNG/PDF sans dimensions réelles est refusé ; un artefact HTML n’en a pas besoin', () => {
+    const base = { checksum: 'abc', bytes: 100, jobId: 'job-1' }
+    expect(isValid('artifact', { ...base, kind: 'html' })).toBe(true)
+    expect(validate('artifact', { ...base, kind: 'png' }).some((e) => e.field === 'dimensions')).toBe(true)
+    expect(isValid('artifact', { ...base, kind: 'png', width: 800, height: 600 })).toBe(true)
+    expect(validate('artifact', { kind: 'html', bytes: 100, jobId: 'job-1' }).some((e) => e.field === 'checksum')).toBe(true)
+    expect(validate('artifact', { ...base, kind: 'html', jobId: undefined }).some((e) => e.field === 'jobId')).toBe(true)
+  })
+
+  it('une publication respecte ses six états ; échec et succès portent chacun leur preuve', () => {
+    const base = { id: 'pub-1', documentId: 'doc-1', channel: 'create', artifactIds: [] }
+    expect(isValid('publication', { ...base, status: 'brouillon' })).toBe(true)
+    expect(validate('publication', { ...base, status: 'inconnu' }).some((e) => e.field === 'status')).toBe(true)
+    expect(validate('publication', { ...base, status: 'prêt' }).some((e) => e.field === 'attempts')).toBe(true)
+    expect(isValid('publication', { ...base, status: 'prêt', attempts: 1 })).toBe(true)
+    expect(validate('publication', { ...base, status: 'échoué', attempts: 1 }).some((e) => e.field === 'error')).toBe(true)
+    expect(validate('publication', { ...base, status: 'publié', attempts: 1 }).some((e) => e.field === 'receiptUrl')).toBe(true)
+    expect(isValid('publication', { ...base, status: 'publié', attempts: 1, receiptUrl: 'https://…' })).toBe(true)
+  })
+})
+
+describe('L3 — le Monteur', () => {
+  it('respecte le nombre de beats imposé par le thème', () => {
+    const { cut } = fixture()
+    expect(cut.beats.length).toBeGreaterThanOrEqual(theme.beatCount.min)
+    expect(cut.beats.length).toBeLessThanOrEqual(theme.beatCount.max)
+    expect(isValid('cut', cut)).toBe(true)
+  })
+
+  it('ne perd jamais un mot en ajustant le nombre de beats', () => {
+    const { brief } = fixture()
+    const words = (t) => String(t).split(/\s+/).filter(Boolean).length
+    const source = words(SEED_NOTES)
+    const cut = buildCut(brief, SEED_NOTES, { beatCount: { min: 3, max: 3 } })
+    expect(cut.beats.length).toBe(3)
+    expect(words(cut.beats.map((b) => b.text).join(' '))).toBe(source)
+  })
+
+  it('ouvre sur une accroche et ferme sur un appel', () => {
+    expect(roleForPosition(0, 5)).toBe('hook')
+    expect(roleForPosition(4, 5)).toBe('cta')
+    expect(roleForPosition(3, 5)).toBe('payoff')
+    expect(roleForPosition(0, 1)).toBe('hook')
+  })
+
+  it('déplace, fusionne, scinde, ajoute et retire sans casser le contrat', () => {
+    const { cut } = fixture()
+    const moved = moveBeat(cut, 0, 2)
+    expect(moved.beats[2].id).toBe(cut.beats[0].id)
+    expect(isValid('cut', moved)).toBe(true)
+
+    const merged = mergeBeats(cut, 0)
+    expect(merged.beats.length).toBe(cut.beats.length - 1)
+    expect(merged.beats[0].text).toContain(cut.beats[1].text.slice(0, 20))
+
+    const split = splitBeat(cut, 1)
+    expect(split.beats.length).toBeGreaterThanOrEqual(cut.beats.length)
+
+    const added = addBeat(cut, 0)
+    expect(added.beats.length).toBe(cut.beats.length + 1)
+    expect(isValid('cut', added)).toBe(true)
+
+    const removed = removeBeat(cut, 0)
+    expect(removed.beats.length).toBe(cut.beats.length - 1)
+
+    const patched = updateBeat(cut, 0, { text: 'Texte remplacé pour le test.' })
+    expect(patched.beats[0].text).toBe('Texte remplacé pour le test.')
+    expect(cut.beats[0].text).not.toBe('Texte remplacé pour le test.') // immuabilité
+  })
+
+  it('ne refit pas un cut verrouillé', () => {
+    const { cut } = fixture()
+    const locked = { ...cut, locked: true }
+    expect(refitCut(locked, { beatCount: { min: 1, max: 1 } })).toBe(locked)
+  })
+})
+
+describe('L5 — formats', () => {
+  it('borne la durée aux limites du format', () => {
+    const { cut } = fixture()
+    const d = durationOf(cut, overlayFormat)
+    expect(d).toBeGreaterThanOrEqual(overlayFormat.time.min)
+    expect(d).toBeLessThanOrEqual(overlayFormat.time.max)
+    expect(durationOf(cut, webFormat)).toBe(0)
+    expect(isTemporal(webFormat)).toBe(false)
+    expect(isTemporal(overlayFormat)).toBe(true)
+  })
+
+  it('la durée d’un beat dépend du tempo et du poids, jamais du hasard', () => {
+    const beat = { tempo: 'calm', weight: 0.5 }
+    expect(beatDuration(beat)).toBe(beatDuration({ ...beat }))
+    expect(beatDuration({ tempo: 'snap', weight: 0.5 })).toBeLessThan(beatDuration({ tempo: 'still', weight: 0.5 }))
+  })
+
+  it('tout format du catalogue est valide', () => {
+    for (const id of ['F-web-article', 'F-still-1080-square', 'F-still-1080x1350', 'F-still-1080x1920', 'F-print-a4', 'F-video-1920x1080', 'F-overlay-1920x1080']) {
+      expect(validate('format', getFormat(id))).toEqual([])
+    }
+  })
+})
+
+describe('L6 — compilateur', () => {
+  it('produit deux fois exactement la même page (reproductibilité)', () => {
+    const { brief, cut } = fixture()
+    const a = compile({ brief, cut, theme, format: webFormat, seed: 7 })
+    const b = compile({ brief, cut, theme, format: webFormat, seed: 7 })
+    expect(a.html).toBe(b.html)
+    expect(checksumOf(a.html)).toBe(checksumOf(b.html))
+  })
+
+  it('produit une page autonome : aucun appel réseau', () => {
+    const { brief, cut } = fixture()
+    const { html } = compile({ brief, cut, theme, format: webFormat, seed: 1 })
+    expect(html).toMatch(/^<!doctype html>/i)
+    expect(html).toContain('<style>')
+    expect(html).not.toMatch(/<link[^>]+rel=["']stylesheet/i)
+    expect(html).not.toMatch(/<script/i)
+    expect(html).not.toMatch(/https?:\/\//)
+  })
+
+  it('échappe le contenu : pas d’injection depuis un brief', () => {
+    const { cut } = fixture()
+    const brief = { ...fixture().brief, title: '<script>alert(1)</script>' }
+    const { html } = compile({ brief, cut, theme, format: webFormat, seed: 1 })
+    expect(html).not.toContain('<script>alert(1)</script>')
+    expect(html).toContain('&lt;script&gt;')
+  })
+
+  it('marque chaque beat pour le Critique', () => {
+    const { brief, cut } = fixture()
+    const { html } = compile({ brief, cut, theme, format: webFormat, seed: 1 })
+    expect(html).toContain('data-role="hook"')
+    expect(html).toContain('data-index="1"')
+    expect(html).toContain(`data-zrm-theme="${theme.id}"`)
+  })
+
+  it('réduit l’échelle quand le contenu est dense sur un canevas fixe', () => {
+    const { brief, cut } = fixture()
+    const big = { ...cut, beats: cut.beats.map((b) => ({ ...b, text: b.text.repeat(6) })) }
+    expect(shrinkFactor(big, verticalFormat)).toBeLessThan(shrinkFactor(cut, verticalFormat))
+    expect(shrinkFactor(cut, webFormat)).toBe(1)
+    const { html } = compile({ brief, cut: big, theme, format: verticalFormat, seed: 1 })
+    expect(html).toContain('data-zrm-format="F-still-1080x1920"')
+  })
+
+  it('mesure un temps de lecture cohérent', () => {
+    const { cut } = fixture()
+    const rt = readingTimeOf(cut)
+    expect(rt.words).toBeGreaterThan(50)
+    expect(rt.minutes).toBeGreaterThanOrEqual(1)
+  })
+})
+
+// RÉGRESSION (bug réel signalé par Matthieu le 2026-07-25) : le format A4 était inutilisable —
+// le compilateur ignorait le `dpi`, donc un corps de 19 px atterrissait sur un canevas de
+// 2480 px de large. Ce bloc vérifie TOUS les formats, pas seulement celui qu'on a sous les yeux.
+describe('L5/L6 — tout format produit un rendu lisible', () => {
+  const bodySizeOf = (html) => {
+    const body = /body\{[^}]*?font-size:([\d.]+)px/.exec(html)
+    return body ? Number(body[1]) : null
+  }
+
+  for (const format of FORMATS) {
+    it(`${format.label} : corps proportionné au canevas`, () => {
+      const { brief, cut } = fixture()
+      const { html } = compile({ brief, cut, theme, format, seed: 1 })
+      const size = bodySizeOf(html)
+      expect(size).toBeGreaterThan(0)
+      if (format.canvas.h > 0) {
+        // Plancher de lisibilité : sous ~1,2 % de la largeur du canevas, le texte devient un
+        // timbre-poste. C'est exactement ce que produisait A4 avant le correctif (0,77 %).
+        expect(size / format.canvas.w).toBeGreaterThan(0.012)
+        // LE PLAFOND DÉPEND DE LA LARGEUR, et ce n'est pas une concession (2026-08-04).
+        //
+        // Six pour cent était calibré sur des canevas de mille pixels et plus. Sur un pavé
+        // publicitaire de 320 px, un corps de 20 px pèse 6,4 % de la largeur et reste parfaitement
+        // juste : c'est la taille qu'on lit sur une bannière mobile. Un rapport n'est pas une
+        // constante universelle, il dépend de la distance de lecture, laquelle dépend de la taille
+        // de la boîte. Le plafond s'assouplit donc sous 600 px, et nulle part ailleurs.
+        const plafond = format.canvas.w < 600 ? 0.11 : 0.06
+        expect(size / format.canvas.w).toBeLessThan(plafond) // ni l'inverse : pas d'affiche de 2 mots
+      } else {
+        expect(size).toBeGreaterThanOrEqual(16) // confort de lecture à l'écran
+      }
+    })
+
+    it(`${format.label} : bloc centré, texte ferré à gauche, mesure bornée`, () => {
+      const { brief, cut } = fixture()
+      const { html } = compile({ brief, cut, theme, format, seed: 1 })
+      expect(html).toContain('class="zrm-frame"')
+      expect(html).toContain('class="zrm-page"')
+      expect(/\.zrm-page\{[^}]*margin:0 auto/.test(html)).toBe(true)   // bloc centré
+      expect(/\.zrm-page\{[^}]*text-align:left/.test(html)).toBe(true) // texte à gauche
+      const maxWidth = /\.zrm-page\{[^}]*max-width:([^;]+);/.exec(html)
+      expect(maxWidth).toBeTruthy()
+      if (format.canvas.h > 0) expect(maxWidth[1]).toContain('ch') // mesure de lecture réelle
+    })
+  }
+
+  it('A4 rend un corps d’environ 14 points réels à 300 dpi', () => {
+    const { brief, cut } = fixture()
+    const a4 = getFormat('F-print-a4')
+    const { html } = compile({ brief, cut, theme, format: a4, seed: 1 })
+    const px = bodySizeOf(html)
+    const points = (px / a4.canvas.dpi) * 72
+    expect(points).toBeGreaterThan(10)
+    expect(points).toBeLessThan(20)
+  })
+})
+
+// RÉGRESSION (2026-07-25) : « énormément de bugs sur tous les formats crop ». La cause n'était
+// pas le rendu mais la doctrine — on tentait de faire rentrer un article de 5 blocs sur un carré
+// 1080. Un format décide désormais de ce qu'il montre, et l'échelle se MESURE au lieu de se deviner.
+describe('L5/L6 — politique de contenu et ajustement', () => {
+  it('un format de lecture montre tout, un format d’image montre l’essentiel', () => {
+    const { cut } = fixture()
+    expect(cut.beats.length).toBeGreaterThan(2)
+    expect(visibleBeats(cut, getFormat('F-web-article')).length).toBe(cut.beats.length)
+    expect(visibleBeats(cut, getFormat('F-print-a4')).length).toBe(cut.beats.length)
+    expect(visibleBeats(cut, getFormat('F-still-1080-square')).length).toBe(1)
+    expect(visibleBeats(cut, getFormat('F-still-1080x1920')).length).toBe(2)
+  })
+
+  it('ce qui n’est pas montré est COMPTÉ, jamais perdu en silence', () => {
+    const { brief, cut } = fixture()
+    const square = getFormat('F-still-1080-square')
+    expect(omittedCount(cut, square)).toBe(cut.beats.length - 1)
+    expect(omittedCount(cut, getFormat('F-web-article'))).toBe(0)
+    const { meta } = compile({ brief, cut, theme, format: square, seed: 1 })
+    expect(meta.shown + meta.omitted).toBe(cut.beats.length)
+  })
+
+  it('le Critique annonce les blocs réservés aux formats de lecture', () => {
+    const { brief, cut } = fixture()
+    const issues = inspectStatic({ brief, cut, theme, format: getFormat('F-still-1080-square') })
+    const note = issues.find((i) => i.code === 'fit.omitted')
+    expect(note).toBeTruthy()
+    expect(note.severity).toBe(SEVERITY.info)   // une information, pas un blocage : c'est voulu
+    expect(summarize(issues).canPublish).toBe(true)
+  })
+
+  it('l’échelle mesurée descend palier par palier et s’arrête au plancher', () => {
+    let scale = 1
+    const seen = [scale]
+    for (let i = 0; i < 12; i++) { scale = nextShrink(scale); seen.push(scale) }
+    // Strictement décroissante jusqu'au plancher, puis stable : jamais de boucle infinie.
+    expect(scale).toBe(MIN_SHRINK)
+    expect(nextShrink(MIN_SHRINK)).toBe(MIN_SHRINK)
+    expect(seen[1]).toBeLessThan(1)
+    expect(new Set(seen).size).toBeGreaterThan(3)
+  })
+
+  it('une échelle imposée par la mesure gagne sur l’estimation', () => {
+    const { brief, cut } = fixture()
+    const square = getFormat('F-still-1080-square')
+    const guessed = compile({ brief, cut, theme, format: square, seed: 1 })
+    const measured = compile({ brief, cut, theme, format: square, seed: 1, fitScale: 0.54 })
+    expect(measured.meta.scale).toBe(0.54)
+    expect(measured.meta.scale).toBeLessThanOrEqual(guessed.meta.scale)
+    // Et l'export utilisera la MÊME valeur que l'aperçu : la page compilée en porte la trace.
+    expect(measured.html).toContain('data-zrm-scale="0.54"')
+  })
+
+  it('le titre domine sur une affiche, pas sur un article', () => {
+    const { brief, cut } = fixture()
+    const titleOf = (html) => Number(/\.zrm-title\{[^}]*?font-size:([\d.]+)px/.exec(html)?.[1])
+    const bodyOf = (html) => Number(/body\{[^}]*?font-size:([\d.]+)px/.exec(html)?.[1])
+    const article = compile({ brief, cut, theme, format: getFormat('F-web-article'), seed: 1 }).html
+    const poster = compile({ brief, cut, theme, format: getFormat('F-still-1080-square'), seed: 1 }).html
+    expect(titleOf(poster) / bodyOf(poster)).toBeGreaterThan(titleOf(article) / bodyOf(article))
+  })
+})
+
+describe('Gabarits HTML déposés à la main', () => {
+  it('remplace les champs et répète les beats', () => {
+    const tpl = '<h1>{{title}}</h1>{{#beats}}<p data-r="{{role}}">{{number}}. {{text}}</p>{{/beats}}{{^beats}}<em>vide</em>{{/beats}}'
+    const out = renderTemplate(tpl, { title: 'Titre', beats: [{ role: 'hook', text: 'Un' }, { role: 'cta', text: 'Deux' }] })
+    expect(out).toBe('<h1>Titre</h1><p data-r="hook">1. Un</p><p data-r="cta">2. Deux</p>')
+    expect(renderTemplate(tpl, { title: 'T', beats: [] })).toBe('<h1>T</h1><em>vide</em>')
+  })
+
+  it('échappe par défaut et laisse passer le brut sur trois accolades', () => {
+    expect(renderTemplate('{{a}}', { a: '<b>x</b>' })).toBe('&lt;b&gt;x&lt;/b&gt;')
+    expect(renderTemplate('{{{a}}}', { a: '<b>x</b>' })).toBe('<b>x</b>')
+    expect(escapeHtml(`<"'&>`)).toBe('&lt;&quot;&#39;&amp;&gt;')
+  })
+
+  it('signale un gabarit qui n’utilise ni titre ni beats', () => {
+    expect(inspectTemplate('<p>rien</p>')).toEqual({ usesTitle: false, usesBeats: false, hasHtmlSkeleton: false })
+    expect(inspectTemplate('<html><h1>{{title}}</h1>{{#beats}}x{{/beats}}</html>').usesBeats).toBe(true)
+  })
+
+  it('un gabarit malformé ne boucle jamais à l’infini', () => {
+    expect(() => renderTemplate('{{#beats}}sans fin', { beats: [1] })).not.toThrow()
+  })
+
+  it('lit l’en-tête déclaratif d’un gabarit, et survit à un en-tête cassé', () => {
+    const good = '<!--zr-theme { "description": "Une nationale", "formats": ["F-web-article","F-print-a4"], "beatCount": {"min":4,"max":12}, "measure": 64 } -->\n<html>…'
+    expect(readThemeHeader(good)).toMatchObject({ description: 'Une nationale', measure: 64 })
+    expect(readThemeHeader(good).formats).toEqual(['F-web-article', 'F-print-a4'])
+    // Absent, cassé ou hostile : le gabarit reste utilisable, jamais d'exception.
+    expect(readThemeHeader('<html>rien</html>')).toEqual({})
+    expect(readThemeHeader('<!--zr-theme { casse: }-->')).toEqual({})
+    expect(readThemeHeader('<!--zr-theme [1,2,3]-->')).toEqual({})
+    expect(readThemeHeader(null)).toEqual({})
+  })
+
+  it('lit les métadonnées depuis le nom de fichier', () => {
+    expect(parseThemeFileName('./T-01-3-2--lecture-pure.html')).toMatchObject({ id: 'T-01-3-2', family: '01', sub: 3, variant: 2, name: 'Lecture pure' })
+    expect(parseThemeFileName('./mauvais-nom.html')).toBe(null)
+    expect(parseThemeId('T-16-8-1').familyLabel).toBe('Japon & Asie')
+  })
+})
+
+describe('L4 — registre de polices (ZM-L4-11)', () => {
+  it('installe les six archétypes typographiques, tous sous licence libre', () => {
+    expect(FONTS.length).toBeGreaterThanOrEqual(13)
+    for (const a of ['labeur', 'grotesque', 'condense', 'didone', 'mono']) {
+      expect(fontsOfArchetype(a).length).toBeGreaterThan(0)
+    }
+    // Embarquer une police dans un fichier livré au client EXIGE une licence qui l'autorise.
+    for (const f of FONTS) expect(['OFL-1.1', 'Apache-2.0']).toContain(f.license)
+  })
+
+  it('couvre les 128 sous-familles du catalogue, une police chacune', () => {
+    // Le compte n'est pas rond par hasard : 16 familles x 8 sous-familles = 128.
+    expect(Object.keys(SUBFAMILY_FONTS).length).toBe(128)
+    expect(FONTS.length).toBeGreaterThanOrEqual(128)
+    // Toute police mappée doit être RÉELLEMENT installée, sinon la table promet du vide.
+    const installed = new Set(FONTS.map((f) => f.family))
+    for (const [id, v] of Object.entries(SUBFAMILY_FONTS)) {
+      expect(installed.has(v.font), `${id} -> ${v.font} non installée`).toBe(true)
+    }
+  })
+
+  it('les huit variantes d’une sous-famille partagent leur police', () => {
+    expect(defaultFontFor('T-01-1-1')).toBe(defaultFontFor('T-01-1-8'))
+    expect(defaultFontFor('T-01-1-1')).not.toBe(defaultFontFor('T-01-2-1'))
+    expect(subfamiliesUsing(defaultFontFor('T-01-1-1'))).toContain('01-1')
+    expect(defaultFontFor('pas-un-id')).toBe(null)
+  })
+
+  it('l’affinité d’archétype est respectée, pas le hasard', () => {
+    const archetypeOf = (f) => FONTS.find((x) => x.family === f)?.archetype
+    expect(archetypeOf(defaultFontFor('T-01-1-1'))).toBe('labeur')      // presse
+    expect(archetypeOf(defaultFontFor('T-02-1-1'))).toBe('condense')    // chaîne d'info
+    expect(archetypeOf(defaultFontFor('T-06-1-1'))).toBe('didone')      // haute couture
+    expect(archetypeOf(defaultFontFor('T-04-1-1'))).toBe('technique')   // trailer de jeu
+  })
+
+  it('rend une pile de replis juste, même pour une famille non installée', () => {
+    expect(fontStack('Playfair Display')).toMatch(/Didot/)
+    // Bug évité : une famille japonaise absente retombait sur sans-serif au lieu d'un mincho.
+    expect(fontStack('Noto Serif JP')).toMatch(/Mincho/)
+    expect(fontStack('Inexistante')).toBe("'Inexistante', system-ui, sans-serif")
+  })
+
+  it('signale ce qui manque au lieu de le rendre en silence', () => {
+    expect(missingFamilies(['Lora'])).toEqual([])
+    expect(missingFamilies(['Noto Sans JP'])).toEqual(['Noto Sans JP'])
+  })
+
+  it('produit des @font-face servis en local, jamais depuis Google', () => {
+    const css = fontFaceCss(['Manrope', 'Lora'])
+    expect(css).toContain('@font-face')
+    expect(css).toContain('/zrm-fonts/')
+    // Une page qui appellerait fonts.gstatic.com ne serait plus autonome.
+    expect(css).not.toMatch(/https?:\/\//)
+    expect(css).toContain('unicode-range')
+  })
+
+  it('chiffre le poids d’un jeu de polices', () => {
+    expect(fontsWeight(['Manrope'])).toBeGreaterThan(1000)
+    expect(fontsWeight(['Inexistante'])).toBe(0)
+  })
+
+  it('le compilateur embarque les polices déclarées par le thème', () => {
+    const { brief, cut } = fixture()
+    const withFonts = { ...theme, fonts: ['Playfair Display'] }
+    const { html } = compile({ brief, cut, theme: withFonts, format: webFormat, seed: 1 })
+    expect(html).toContain("font-family:'Playfair Display'")
+    expect(html).toContain('/zrm-fonts/playfair-display/')
+    expect(html).not.toMatch(/https?:\/\//)
+  })
+
+  it('le Critique avertit d’une police non installée', () => {
+    const { brief, cut } = fixture()
+    const jp = { ...theme, fonts: ['Noto Sans JP'] }
+    const issues = inspectStatic({ brief, cut, theme: jp, format: webFormat })
+    const note = issues.find((i) => i.code === 'font.missing')
+    expect(note).toBeTruthy()
+    expect(note.severity).toBe(SEVERITY.warning)   // repli propre, pas un blocage
+    expect(summarize(issues).canPublish).toBe(true)
+  })
+})
+
+describe('L11 — le Critique', () => {
+  it('calcule un contraste juste, transparence comprise', () => {
+    expect(contrastRatio('#000000', '#ffffff')).toBe(21)
+    expect(contrastRatio('#ffffff', '#ffffff')).toBe(1)
+    expect(parseColor('rgba(20,22,26,.56)')).toMatchObject({ r: 20, g: 22, b: 26 })
+    // Un gris semi-transparent sur blanc doit être mesuré composé, donc bien plus clair que du noir plein.
+    expect(contrastRatio('rgba(20,22,26,.56)', '#ffffff')).toBeLessThan(contrastRatio('#141a1a', '#ffffff'))
+  })
+
+  it('valide le projet de démonstration sans défaut bloquant', () => {
+    const { brief, cut } = fixture()
+    const issues = inspectStatic({ brief, cut, theme, format: webFormat, dark: false })
+    const { blocking, canPublish } = summarize(issues)
+    expect(blocking.map((b) => b.message)).toEqual([])
+    expect(canPublish).toBe(true)
+  })
+
+  it('bloque un contraste sous le seuil du thème', () => {
+    const { brief, cut } = fixture()
+    const pale = { ...theme, palette: { ...theme.palette, ink: 'rgba(200,200,200,1)' } }
+    const issues = inspectStatic({ brief, cut, theme: pale, format: webFormat })
+    expect(issues.some((i) => i.code === 'contrast.low' && i.severity === SEVERITY.blocking)).toBe(true)
+  })
+
+  it('bloque une mention obligatoire absente', () => {
+    const { brief, cut } = fixture()
+    const withMention = { ...brief, constraints: { ...brief.constraints, mentions: ['Mention légale absente'] } }
+    const issues = inspectStatic({ brief: withMention, cut, theme, format: webFormat })
+    expect(issues.some((i) => i.code === 'mention.missing')).toBe(true)
+  })
+
+  it('avertit quand une intention de vente n’a pas d’appel', () => {
+    const { brief, cut } = fixture()
+    const sell = { ...brief, intent: 'vendre' }
+    const noCta = { ...cut, beats: cut.beats.map((b) => ({ ...b, role: b.role === 'cta' ? 'payoff' : b.role })) }
+    expect(inspectStatic({ brief: sell, cut: noCta, theme, format: webFormat }).some((i) => i.code === 'cut.noCta')).toBe(true)
+  })
+})
+
+describe('L3 — images dans les blocs (carte Y)', () => {
+  const img = (n) => ({ kind: 'image', dataUrl: `data:image/webp;base64,${'A'.repeat(n)}`, label: `img${n}` })
+
+  it('ajoute, retire et déplace un emplacement sans toucher au reste', () => {
+    const { cut } = fixture()
+    const a = addSlot(cut, 0, img(8))
+    expect(a.beats[0].slots.length).toBe(1)
+    expect(a.beats[1].slots.length).toBe(0)      // les autres blocs sont intacts
+    expect(cut.beats[0].slots.length).toBe(0)    // immuabilité
+
+    const b = addSlot(a, 0, img(12))
+    expect(moveSlot(b, 0, 0, 1).beats[0].slots[1].label).toBe('img8')
+    expect(removeSlot(b, 0, 0).beats[0].slots.map((s) => s.label)).toEqual(['img12'])
+  })
+
+  it('plafonne à quatre images par bloc', () => {
+    const { cut } = fixture()
+    let c = cut
+    for (let i = 0; i < 10; i++) c = addSlot(c, 0, img(4))
+    expect(c.beats[0].slots.length).toBe(MAX_SLOTS)
+  })
+
+  it('mesure le poids réel des images encodées', () => {
+    const { cut } = fixture()
+    expect(slotsWeight(cut)).toBe(0)
+    expect(countSlots(cut)).toBe(0)
+    const withImages = addSlot(addSlot(cut, 0, img(400)), 1, img(800))
+    expect(countSlots(withImages)).toBe(2)
+    // base64 -> ~3/4 : 1200 caractères pèsent environ 900 octets.
+    expect(slotsWeight(withImages)).toBeGreaterThan(700)
+    expect(slotsWeight(withImages)).toBeLessThan(1000)
+  })
+
+  it('le Critique alerte au-delà de six mégaoctets d’images', () => {
+    const { brief, cut } = fixture()
+    const heavy = addSlot(cut, 0, img(9_000_000))
+    const issues = inspectStatic({ brief, cut: heavy, theme, format: webFormat })
+    expect(issues.some((i) => i.code === 'doc.heavy')).toBe(true)
+    // Avertissement, pas blocage : c'est lourd, pas faux.
+    expect(summarize(issues).canPublish).toBe(true)
+  })
+
+  it('une image d’un bloc se retrouve dans la page compilée', () => {
+    const { brief, cut } = fixture()
+    const withImage = addSlot(cut, 0, { kind: 'image', dataUrl: 'data:image/webp;base64,ABCD', label: 'Ma photo' })
+    const { html } = compile({ brief, cut: withImage, theme, format: webFormat, seed: 1 })
+    expect(html).toContain('data:image/webp;base64,ABCD')
+    expect(html).toContain('alt="Ma photo"')
+  })
+})
+
+describe('L8 — publier (carte X)', () => {
+  it('produit un Markdown déterministe et lisible', () => {
+    const { brief, cut } = fixture()
+    const a = toMarkdown({ brief, cut, theme, format: webFormat })
+    const b = toMarkdown({ brief, cut, theme, format: webFormat })
+    expect(a).toBe(b)
+    expect(a.startsWith('# Un brief, mille formes')).toBe(true)
+    expect(a).toContain('> Le goulot')          // le message en exergue
+    expect(a).toContain('*Pour ')                // le public
+    expect(a).toContain('« Lecture pure »')      // la signature du thème
+    expect(a).not.toContain('<!doctype')         // du Markdown, jamais du HTML compilé
+  })
+
+  it('n’annonce pas de rôle pour l’accroche ni pour la chute', () => {
+    const { brief, cut } = fixture()
+    const md = toMarkdown({ brief, cut, theme, format: webFormat })
+    expect(md).not.toContain('### Accroche')
+    expect(md).not.toContain('### Chute')
+    expect(md).toContain('### ')                 // les rôles intermédiaires, eux, structurent
+  })
+
+  it('ne publie que ce que le format montre', () => {
+    const { brief, cut } = fixture()
+    const full = toMarkdown({ brief, cut, theme, format: webFormat })
+    const square = toMarkdown({ brief, cut, theme, format: getFormat('F-still-1080-square') })
+    expect(square.length).toBeLessThan(full.length)
+  })
+
+  it('embarque les images du bloc dans la page publiée', () => {
+    const { brief, cut } = fixture()
+    const withImage = addSlot(cut, 0, { kind: 'image', dataUrl: 'data:image/webp;base64,ZZZZ', label: 'Photo' })
+    expect(toMarkdown({ brief, cut: withImage, theme, format: webFormat })).toContain('![Photo](data:image/webp;base64,ZZZZ)')
+  })
+
+  it('dérive un chemin et une adresse ouvrables', () => {
+    expect(publishPathFor('pages/Media', 'Un brief, mille formes')).toBe('pages/Media/un-brief-mille-formes.md')
+    expect(publishPathFor('pages/Media/', 'Été à Ōsaka')).toBe('pages/Media/ete-a-osaka.md')
+    expect(pageUrlFor('pages/Media/x.md', 'https://exemple.test'))
+      .toBe('https://exemple.test/?page=pages%2FMedia%2Fx.md')
+  })
+})
+
+describe('L5/L9 — arbre de déclinaisons', () => {
+  it('montre toutes les sorties d’un coup, groupées par intention de diffusion', () => {
+    const { brief, cut } = fixture()
+    const tree = declensionTree({ brief, cut, theme })
+    expect(tree.map((g) => g.id)).toEqual(['lecture', 'reseaux', 'ecran'])
+    const branches = tree.flatMap((g) => g.branches)
+    expect(branches.length).toBe(DECLENSION_GROUPS.reduce((n, g) => n + g.formats.length, 0))
+    // Chaque branche porte son ETAT REEL, pas une decoration.
+    for (const b of branches) {
+      expect(typeof b.ready).toBe('boolean')
+      expect(b.shown + b.omitted).toBe(b.total)
+      expect(b.total).toBe(cut.beats.length)
+    }
+  })
+
+  it('distingue une lecture d’une image : la première montre tout, la seconde non', () => {
+    const { brief, cut } = fixture()
+    const tree = declensionTree({ brief, cut, theme })
+    const web = tree[0].branches.find((b) => b.formatId === 'F-web-article')
+    const carre = tree[1].branches.find((b) => b.formatId === 'F-still-1080-square')
+    expect(web.omitted).toBe(0)
+    expect(carre.omitted).toBeGreaterThan(0)
+    expect(carre.shown).toBeLessThan(web.shown)
+  })
+
+  it('signale les formats que le thème ne déclare pas', () => {
+    const { brief, cut } = fixture()
+    const etroit = { ...theme, formats: ['F-web-article'] }
+    const s = declensionSummary(declensionTree({ brief, cut, theme: etroit }))
+    expect(s.undeclared).toContain('F-still-1080x1920')
+    expect(s.undeclared).not.toContain('F-web-article')
+  })
+
+  it('chiffre ce qui reste hors cadre, en mots', () => {
+    const { cut } = fixture()
+    expect(trimAdvice(cut, webFormat)).toBe(null)
+    const advice = trimAdvice(cut, getFormat('F-still-1080-square'))
+    expect(advice.omitted).toBe(cut.beats.length - 1)
+    expect(advice.words).toBeGreaterThan(20)   // « il te manque de la place », pas juste « ça déborde »
+  })
+
+  it('un groupe est en défaut dès qu’UNE branche l’est : on ne moyenne pas un blocage', () => {
+    const { brief, cut } = fixture()
+    const pale = { ...theme, palette: { ...theme.palette, ink: 'rgba(210,210,210,1)' } }
+    const tree = declensionTree({ brief, cut, theme: pale })
+    expect(declensionSummary(tree).blocking).toBeGreaterThan(0)
+    expect(tree.every((g) => g.ready < g.total)).toBe(true)
+  })
+})
+
+describe('L7 — la Forge', () => {
+  it('produit la commande alpha exacte pour un habillage', () => {
+    const cmd = ffmpegCommand(overlayFormat)
+    expect(cmd).toContain('prores_ks')
+    expect(cmd).toContain('yuva444p10le')
+    expect(cmd).toContain('-profile:v 4444')
+    expect(cmd).not.toContain('videotoolbox') // support alpha non mesuré : jamais utilisé ici
+  })
+
+  it('impose hvc1 sur tout MP4 HEVC', () => {
+    const cmd = ffmpegCommand(getFormat('F-video-1920x1080'))
+    expect(cmd).toContain('-tag:v hvc1')
+  })
+
+  it('chiffre le coût disque évité par le flux direct', () => {
+    const { brief, cut } = fixture()
+    const plan = forgePlan({ brief, cut, theme, format: overlayFormat, html: '<html></html>', seed: 1 })
+    expect(plan.frames).toBe(Math.round(plan.duration * plan.fps))
+    expect(plan.bytesPerFrame).toBe(1920 * 1080 * 4)
+    expect(plan.rawBytesIfWrittenToDisk).toBeGreaterThan(1e9)
+    expect(plan.script).toContain('document.getAnimations()')
+    expect(plan.script).toContain('omitBackground: true')
+  })
+
+  it('formate les tailles lisiblement', () => {
+    expect(formatBytes(0)).toBe('0 o')
+    expect(formatBytes(1024)).toBe('1 ko')
+    expect(formatBytes(1024 * 1024 * 1.5)).toBe('1.5 Mo')
+  })
+})
+
+// AUDIT P0-R8 · `newProject`/`duplicateProject`/`resetSeed` employaient `list.length` comme
+// compteur d'identifiant. Supprimer un projet du milieu d'une liste de trois puis en créer un
+// nouveau peut ramener la longueur à une valeur déjà vue, donc reproduire l'identifiant d'un
+// projet ENCORE VIVANT. `nextProjectSerial` remplace ce compteur par une valeur qui ne recule
+// jamais, persistée indépendamment de la liste elle-même — même principe que `composition.serial`
+// pour les calques (`layers.js`), déjà éprouvé sur ce dépôt.
+describe('store — identités de projet (AUDIT P0-R8)', () => {
+  it('nextProjectSerial ne se répète jamais et croît strictement à chaque appel', () => {
+    const a = nextProjectSerial()
+    const b = nextProjectSerial()
+    const c = nextProjectSerial()
+    expect(b).toBeGreaterThan(a)
+    expect(c).toBeGreaterThan(b)
+    expect(new Set([a, b, c]).size).toBe(3)
+  })
+
+  it('un identifiant recréé après une suppression simulée ne collisionne jamais avec un survivant', () => {
+    // Reproduit exactement le risque documenté : projet 1 créé, projet 2 créé puis « supprimé »
+    // (retiré de la liste vivante, mais le compteur ne le sait pas et ne recule jamais), projet 3
+    // créé ensuite. Avec `list.length` seul, projet 3 aurait pu reprendre le compteur du projet 2
+    // pendant que celui-ci existe TOUJOURS dans une autre liste ou un autre onglet.
+    const n1 = nextProjectSerial()
+    const id1 = makeId('project', `nouveau${n1}`, n1)
+    const n2 = nextProjectSerial()
+    const id2 = makeId('project', `nouveau${n2}`, n2)   // « supprimé » ensuite, mais le compteur avance quand même
+    const n3 = nextProjectSerial()
+    const id3 = makeId('project', `nouveau${n3}`, n3)
+    expect(id3).not.toBe(id1)
+    expect(id3).not.toBe(id2)
+  })
+})
+
+// AUDIT P1-R11 · le Cut porte un verrou dont seul `refitCut` respectait le sens : les neuf autres
+// mutations (déplacer/fusionner/scinder/modifier/retirer/ajouter un beat, ajouter/retirer/déplacer
+// un emplacement média) l'ignoraient totalement, à l'inverse de ce que le bouton promet déjà
+// (« un article verrouillé ne bouge plus »). La fusion, elle, tronquait silencieusement au-delà de
+// MAX_SLOTS. Et `addBeat`/`splitBeat` dérivaient leur identifiant de la position courante, qu'une
+// suppression puis une insertion identique pouvait reproduire à l'identique.
+describe('cut — verrou, fusion sans perte et identifiants (AUDIT P1-R11)', () => {
+  it('Verrouillé bloque les neuf mutations directes, refitCut compris', () => {
+    let c = fixture().cut
+    c = addSlot(c, 0, { kind: 'image', dataUrl: 'data:image/png;base64,AAA', label: 'x' })
+    c = { ...c, locked: true }
+    const gele = c
+
+    expect(moveBeat(c, 0, 1)).toBe(gele)
+    expect(mergeBeats(c, 0)).toBe(gele)
+    expect(splitBeat(c, 0)).toBe(gele)
+    expect(updateBeat(c, 0, { text: 'Modifié.' })).toBe(gele)
+    expect(removeBeat(c, 0)).toBe(gele)
+    expect(addBeat(c, 0)).toBe(gele)
+    expect(addSlot(c, 1, { kind: 'image', dataUrl: 'data:image/png;base64,BBB' })).toBe(gele)
+    expect(removeSlot(c, 0, 0)).toBe(gele)
+    expect(moveSlot(c, 0, 0, 0)).toBe(gele)
+    expect(refitCut(c, { beatCount: { min: 1, max: 1 } })).toBe(gele)
+  })
+
+  it('une mutation directe reste possible sur un Cut NON verrouillé : le verrou est bien la seule cause du refus', () => {
+    const c = fixture().cut
+    expect(updateBeat(c, 0, { text: 'Modifié.' })).not.toBe(c)
+  })
+
+  it('une fusion qui dépasserait MAX_SLOTS est REFUSÉE, jamais tronquée en silence', () => {
+    let c = fixture().cut
+    // Trois emplacements sur le premier beat, deux sur le second : la somme (5) dépasse MAX_SLOTS (4).
+    c = addSlot(c, 0, { kind: 'image', dataUrl: 'data:image/png;base64,A' })
+    c = addSlot(c, 0, { kind: 'image', dataUrl: 'data:image/png;base64,B' })
+    c = addSlot(c, 0, { kind: 'image', dataUrl: 'data:image/png;base64,C' })
+    c = addSlot(c, 1, { kind: 'image', dataUrl: 'data:image/png;base64,D' })
+    c = addSlot(c, 1, { kind: 'image', dataUrl: 'data:image/png;base64,E' })
+    expect(c.beats[0].slots).toHaveLength(3)
+    expect(c.beats[1].slots).toHaveLength(2)
+
+    const avant = c
+    const apres = mergeBeats(c, 0)
+    expect(apres).toBe(avant)   // refusée : rien ne change
+    expect(apres.beats[0].slots).toHaveLength(3)   // aucune image perdue
+    expect(apres.beats[1].slots).toHaveLength(2)
+  })
+
+  it('une fusion qui reste dans la limite réussit normalement, sans régression', () => {
+    let c = fixture().cut
+    c = addSlot(c, 0, { kind: 'image', dataUrl: 'data:image/png;base64,A' })
+    c = addSlot(c, 1, { kind: 'image', dataUrl: 'data:image/png;base64,B' })
+    const apres = mergeBeats(c, 0)
+    expect(apres).not.toBe(c)
+    expect(apres.beats[0].slots).toHaveLength(2)
+    expect(apres.beats.length).toBe(c.beats.length - 1)
+  })
+
+  it('un beat recréé au même endroit après suppression ne reprend jamais un identifiant déjà employé', () => {
+    let c = fixture().cut
+    const idsVus = new Set(c.beats.map((b) => b.id))
+
+    c = addBeat(c, 1)
+    const premierAjout = c.beats[2]
+    expect(idsVus.has(premierAjout.id)).toBe(false)
+
+    // Avant le correctif, `addBeat` dérivait son id de la position ET de la longueur COURANTES :
+    // retirer ce beat puis reproduire EXACTEMENT le même appel (même position, même longueur de
+    // tableau retrouvée) reproduisait donc EXACTEMENT le même identifiant.
+    c = removeBeat(c, 2)
+    c = addBeat(c, 1)
+    const secondAjout = c.beats[2]
+    expect(secondAjout.id).not.toBe(premierAjout.id)
+    expect(idsVus.has(secondAjout.id)).toBe(false)
+  })
+
+  it('scinder un beat produit deux identifiants neufs, jamais déjà employés ni identiques entre eux', () => {
+    let c = fixture().cut
+    c = updateBeat(c, 0, { text: 'Première phrase ici. Deuxième phrase ici. Troisième phrase ici.' })
+    const idAvant = c.beats[0].id
+    const idsAutres = new Set(c.beats.slice(1).map((b) => b.id))
+    c = splitBeat(c, 0)
+    const [a, b] = c.beats
+    expect(a.id).not.toBe(idAvant)
+    expect(b.id).not.toBe(idAvant)
+    expect(a.id).not.toBe(b.id)
+    expect(idsAutres.has(a.id)).toBe(false)
+    expect(idsAutres.has(b.id)).toBe(false)
+  })
+})

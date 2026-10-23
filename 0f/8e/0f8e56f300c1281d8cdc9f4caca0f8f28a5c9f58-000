@@ -1,0 +1,27 @@
+// cpu-bench.mjs (17 October 2026): CPU cost of ONE Worker run on real data, cold process, network replaced by files (so only JavaScript compute is counted).
+// The free plan allows 10 ms CPU per run. Usage: node cpu-bench.mjs <plan-response.json> <events.json> [fast]
+import fs from 'node:fs'
+const t0 = process.cpuUsage()
+const { tick } = await import('../src/tick.js')            // cold module load is part of the cost / le chargement a froid compte
+const loadMs = (process.cpuUsage(t0).user + process.cpuUsage(t0).system) / 1000
+const [planFile, eventsFile, mode] = process.argv.slice(2)
+const planText = fs.readFileSync(planFile, 'utf8'), eventsText = fs.readFileSync(eventsFile, 'utf8')
+const json = (text, status = 200) => new Response(text, { status })
+const fetchImpl = async (url, init = {}) => {
+  const u = new URL(url)
+  if (u.host === 'oauth2.googleapis.com') return json('{"access_token":"x","expires_in":3600}')
+  if (u.pathname === '/api/page' && !init.method) return json(planText)
+  if (u.searchParams.get('updatedMin')) return json('{"items":[]}')
+  if (u.pathname.endsWith('/events')) return json(eventsText)
+  return json('{}', 404)
+}
+const sha = JSON.parse(planText).sha
+const env = { ZR_API_SECRET: 'x', GOOGLE_CLIENT_ID: 'x', GOOGLE_CLIENT_SECRET: 'x', GOOGLE_REFRESH_TOKEN: 'x', DRY_RUN: 'true' }
+const state = mode === 'fast' ? { get: async () => ({ planSha: sha }), set: async () => {} } : { get: async () => null, set: async () => {} }
+// Node initialises Response/URL/URLSearchParams lazily (about 20 ms, once); Cloudflare's runtime has them native. Warm them up so only OUR code is counted.
+// FR : Node initialise ces classes a la premiere utilisation (~20 ms) ; pas Cloudflare. On les chauffe pour ne compter que notre code.
+await new Response('{}').json(); new URL('https://a.b/c?d=1').searchParams.set('e', '1'); new URLSearchParams({ a: '1' }).toString(); new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris' }).format(new Date())
+const t1 = process.cpuUsage()
+const summary = await tick(env, { fetchImpl, state, now: new Date('2026-10-17T21:03:00Z') })
+const run = process.cpuUsage(t1)
+console.log(JSON.stringify({ mode: summary.mode, loadMs: +loadMs.toFixed(1), tickMs: +((run.user + run.system) / 1000).toFixed(1), totalMs: +(loadMs + (run.user + run.system) / 1000).toFixed(1) }))
