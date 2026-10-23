@@ -1,0 +1,38 @@
+// SnapshotSidebar.mjs (23 October 2026): freezes the sidebar lab into one self-contained HTML (styles inline,
+// fonts and wallpaper embedded, a light/dark switch), for the zenray-edit design registry.
+// FR : fige le banc en un seul HTML autonome (styles en ligne, polices et fond embarqués, bascule clair/sombre).
+import { createRequire } from 'node:module'
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import path from 'node:path'
+const require = createRequire('/Users/zenray/Create/Build/Productions/GithubProductions/ZenRayProgress/package.json')
+const { chromium } = require('playwright')
+const PARAMS = {
+  url: 'http://127.0.0.1:5212/sidebar-lab.html?theme=dark',
+  publicDir: '/Users/zenray/.claude/tmp/tmp-zenray-plan/entry-zoom-v2/work/public',
+  out: '/Users/zenray/.claude/tmp/tmp-zenray-plan/sidebar-designs-v2-italic-23-October-2026/index.html',
+  exe: '/Users/zenray/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell',
+}
+const browser = await chromium.launch({ executablePath: PARAMS.exe })
+const page = await browser.newPage({ viewport: { width: 1180, height: 1400 } })
+await page.goto(PARAMS.url); await page.waitForTimeout(2500)
+let html = await page.evaluate(() => {
+  document.querySelectorAll('script').forEach((s) => s.remove())
+  document.querySelectorAll('link[rel=modulepreload]').forEach((s) => s.remove())
+  return '<!doctype html>\n' + document.documentElement.outerHTML
+})
+await browser.close()
+// Embed every /local asset used by url(...) as a data URI. / embarque chaque ressource locale.
+const mime = { woff2: 'font/woff2', woff: 'font/woff', ttf: 'font/ttf', otf: 'font/otf', webp: 'image/webp', png: 'image/png', jpg: 'image/jpeg', svg: 'image/svg+xml' }
+const cache = new Map()
+html = html.replace(/url\((['"]?)(\/[^)'"]+)\1\)/g, (m, q, p) => {
+  const clean = p.split('?')[0], file = path.join(PARAMS.publicDir, clean)
+  if (!existsSync(file)) return m
+  if (!cache.has(clean)) cache.set(clean, `data:${mime[clean.split('.').pop()] || 'application/octet-stream'};base64,${readFileSync(file).toString('base64')}`)
+  return `url("${cache.get(clean)}")`
+})
+const toggle = `<button id="zr-theme" style="position:fixed;right:16px;bottom:16px;z-index:9;padding:8px 14px;border-radius:999px;border:0;font:14px var(--zr-police-sans);background:rgba(127,127,127,.25);color:inherit;cursor:pointer">Clair / sombre</button>
+<script>document.getElementById('zr-theme').onclick=function(){var r=document.querySelector('#root > div');r.classList.toggle('zr-dark');document.querySelectorAll('aside').forEach(function(a){a.classList.toggle('zr-ws-sidebar--dark')})}</script>`
+html = html.replace('</body>', toggle + '</body>')
+mkdirSync(path.dirname(PARAMS.out), { recursive: true })
+writeFileSync(PARAMS.out, html)
+console.log(PARAMS.out, (html.length / 1024 / 1024).toFixed(2) + ' MB', 'embedded', cache.size)

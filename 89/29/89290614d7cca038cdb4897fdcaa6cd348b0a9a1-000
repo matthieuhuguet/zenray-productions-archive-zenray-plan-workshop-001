@@ -1,0 +1,18 @@
+// ShootSidebar.mjs (23 October 2026): screenshots of the sidebar lab, dark and light. / captures du banc barre latérale.
+import { createRequire } from 'node:module'
+const require = createRequire('/Users/zenray/Create/Build/Productions/GithubProductions/ZenRayProgress/package.json')
+const { chromium } = require('playwright')
+const exe = '/Users/zenray/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell'
+const out = new URL('../check/', import.meta.url).pathname
+const browser = await chromium.launch({ executablePath: exe })
+for (const theme of ['dark', 'light']) {
+  const page = await browser.newPage({ viewport: { width: 1180, height: 1400 }, deviceScaleFactor: 1, colorScheme: theme })
+  const errors = []; page.on('pageerror', (e) => errors.push(String(e)))
+  await page.goto(`http://127.0.0.1:5212/sidebar-lab.html?theme=${theme}`)
+  await page.waitForTimeout(2500)
+  const info = await page.evaluate(() => [...document.querySelectorAll('figure')].map((f) => ({ cap: f.querySelector('b')?.textContent, items: [...f.querySelectorAll('.zr-ws-item')].slice(0, 3).map((b) => b.textContent), headings: [...f.querySelectorAll('.zr-ws-heading')].map((h) => h.textContent), sub: f.querySelectorAll('.zr-ws-subheading').length, marque: f.querySelectorAll('.zr-ws-marque').length, search: !!f.querySelector('input') })))
+  await page.screenshot({ path: `${out}sidebar-${theme}.png`, fullPage: true })
+  console.log(theme, JSON.stringify(info), errors)
+  await page.close()
+}
+await browser.close()

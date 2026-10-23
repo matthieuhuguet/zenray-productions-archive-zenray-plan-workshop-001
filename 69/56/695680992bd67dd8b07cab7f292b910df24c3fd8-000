@@ -1,0 +1,21 @@
+// CheckRealSidebar.mjs (23 October 2026): measures and photographs the REAL Sidebar component (dark and light). / mesure la vraie barre.
+import { createRequire } from 'node:module'
+const require = createRequire('/Users/zenray/Create/Build/Productions/GithubProductions/ZenRayProgress/package.json')
+const { chromium } = require('playwright')
+const exe = '/Users/zenray/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell'
+const out = new URL('../check/', import.meta.url).pathname
+const browser = await chromium.launch({ executablePath: exe })
+for (const theme of ['dark', 'light']) {
+  const page = await browser.newPage({ viewport: { width: 700, height: 1500 }, colorScheme: theme })
+  await page.goto(`http://127.0.0.1:5212/sidebar-lab.html?theme=${theme}`); await page.waitForTimeout(2500)
+  const aside = page.locator('div[style*="-9999"] aside')
+  const info = await aside.evaluate((a) => {
+    const heads = [...a.querySelectorAll('.zr-ws-heading')], items = [...a.querySelectorAll('.zr-ws-item')]
+    const cs = (e) => getComputedStyle(e)
+    return { marque: a.querySelectorAll('.zr-ws-marque').length, sub: a.querySelectorAll('.zr-ws-subheading').length, heads: heads.map((h) => h.textContent.trim()), firstItems: items.slice(0, 3).map((i) => i.textContent), toolsLast: heads.at(-1).textContent.trim() === 'Tools', borders: heads.map((h) => cs(h).borderTopWidth).join(','), font: cs(heads[0]).fontFamily.slice(0, 20), style: cs(heads[0]).fontStyle, gap: heads.slice(1).map((h) => Math.round(h.getBoundingClientRect().top - h.previousElementSibling.getBoundingClientRect().bottom)).join(','), marriage: items.map((i) => i.textContent).find((t) => /Cléa/.test(t) || /nav\./.test(t)) }
+  })
+  await aside.screenshot({ path: `${out}real-sidebar-${theme}.png` })
+  console.log(theme, JSON.stringify(info))
+  await page.close()
+}
+await browser.close()

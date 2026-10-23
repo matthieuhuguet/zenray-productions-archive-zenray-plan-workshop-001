@@ -1,0 +1,120 @@
+// sidebar-lab.jsx (23 October 2026, 20:40 Paris): three proposals for the left sidebar, built from the REAL one.
+// Column 1 is the live Sidebar component; the three proposals reuse its classes, its NAV list and a copy of
+// its own Tools row (search pill and gear), so nothing is redrawn. Workshop only, never shipped.
+// FR : trois propositions pour la barre latérale, construites depuis la VRAIE. La colonne 1 est le composant
+// en service ; les propositions reprennent ses classes, sa liste NAV et une copie de sa propre ligne Tools.
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createRoot } from 'react-dom/client'
+import './fonts.css'
+import Sidebar, { NAV } from './components/Sidebar.jsx'
+import Icon from './components/Icon.jsx'
+import { THEMES } from './theme.js'
+import { useT } from './i18n/useT.js'
+import { getAllGalleries } from './config/pointerGalleries.js'
+
+// Parameters, one place. / paramètres, un seul endroit.
+const P = {
+  active: 'plan',                 // highlighted view in every column
+  first: ['plan', 'pages'],       // Plan first, then Create
+  width: 232,
+  gap: 28,
+}
+// Spacing parameters, one place. / espacements, un seul endroit.
+const SPACE = { zoneGap: 34, headGap: 2, toolsGap: 30 } // between families about twice the item pitch (31 px), Gestalt proximity
+// V2 (23 October 2026): no rules between families, space instead (Gestalt proximity); one with GT Sectra titles; one stripped to the minimum.
+// FR : V2, plus de filets entre familles, de l'espace à la place ; une avec les titres en GT Sectra ; une réduite au minimum.
+const DESIGNS = [
+  { key: 'A', cls: 'v2-space v2-sectra', name: '2 droit', note: 'Espace sans filets, titres de famille en GT Sectra LCG Regular droit.' },
+  { key: 'B', cls: 'v2-space v2-sectra v2-italic', name: '2 italique', note: 'Même barre, titres de famille en GT Sectra LCG Regular italique (coupe normale, pas Display).' },
+]
+
+const qs = new URLSearchParams(location.search)
+const dark = qs.get('theme') !== 'light'
+const t = THEMES[dark ? 'dark' : 'light']
+
+// The list in its new order: Plan, Create, the rest of the Create family, then galleries, Learn, Apps, Système.
+// FR : la liste dans le nouvel ordre.
+function orderedNav() {
+  const galleries = getAllGalleries().map((g) => ({ key: g.key, label: g.label, labelKey: g.labelKey || `nav.${g.key}`, zone: 'Gallery', zoneKey: 'nav.zoneGallery' }))
+  const create = NAV.filter((n) => n.zone === 'Create')
+  const head = P.first.map((k) => create.find((n) => n.key === k)).filter(Boolean)
+  const rest = create.filter((n) => !P.first.includes(n.key))
+  const after = NAV.filter((n) => n.zone !== 'Create' && n.zone !== 'Gallery')
+  return [...head, ...rest, ...galleries, ...after]
+}
+
+function Item({ n, label }) {
+  return <button className={`zr-navitem zr-ws-item${n.key === P.active ? ' active' : ''}`}>{label}</button>
+}
+function Heading({ children, bare }) {
+  return <button className="zr-ws-heading">{!bare && <Icon name="chevron.down" size={12} style={{ flexShrink: 0 }} />}{children}</button>
+}
+// Copy of the live Tools row (search pill and gear), so the proposals show the exact same pixels. / copie de la vraie ligne Tools.
+function ToolsRow({ source }) {
+  const ref = useRef(null)
+  useLayoutEffect(() => { if (source && ref.current) ref.current.replaceChildren(source.cloneNode(true)) }, [source])
+  return <div ref={ref} />
+}
+
+function Proposal({ d, tools }) {
+  const tr = useT()
+  const items = orderedNav()
+  const bare = false
+  const asideStyle = { width: P.width, flex: `0 0 ${P.width}px`, padding: '17px 18px 22px', display: 'flex', flexDirection: 'column', gap: 10, borderRadius: 30, alignSelf: 'flex-start' }
+  const list = items.map((n, i) => {
+    const newZone = i === 0 || items[i - 1].zone !== n.zone
+    return <React.Fragment key={n.key}>{newZone && <Heading bare={bare}>{tr(n.zoneKey)}</Heading>}<Item n={n} label={tr(n.labelKey)} /></React.Fragment>
+  })
+  return (
+    <aside className={`zr-liquid zr-sidebar-docked zr-ws-sidebar ${d.cls}`} style={asideStyle}>
+      <div>{list}{!bare && <Heading>Tools</Heading>}<div className={bare ? 'v2-tools-foot' : undefined}><ToolsRow source={tools} /></div></div>
+    </aside>
+  )
+}
+
+function Lab() {
+  const live = useRef(null)
+  const [tools, setTools] = useState(null)
+  // The live Tools row is the first flex row after the Tools heading in the real sidebar. / la vraie ligne Tools.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const row = live.current?.querySelector('aside .zr-ws-heading + div')
+      if (row) { setTools(row); clearInterval(id) }
+    }, 50)
+    return () => clearInterval(id)
+  }, [])
+  const noop = () => {}
+  return (
+    <div className={dark ? 'zr-dark' : ''} style={{ minHeight: '100vh', padding: '24px 16px 60px', boxSizing: 'border-box' }}>
+      <div style={{ display: 'flex', gap: P.gap, alignItems: 'flex-start', flexWrap: 'wrap', justifyContent: 'center' }}>
+        <div ref={live} style={{ position: 'absolute', left: -9999, top: 0 }}>
+          <Sidebar t={t} view={P.active} setView={noop} floating={false} theme={dark ? 'dark' : 'light'} setTheme={noop}
+            onOpenYoutubeVideo={noop} onOpenSpotifyTrack={noop} onOpenLocalTrack={noop} onOpenAudioPlayer={noop} onOpenTodayNote={noop} />
+        </div>
+        {DESIGNS.map((d, i) => (
+          <figure key={d.key} style={{ margin: 0 }}>
+            <figcaption className="zr-lab-cap"><b>{d.name}</b><span>{d.note}</span></figcaption>
+            <Proposal d={d} tools={tools} />
+          </figure>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// Captions only: workshop text above each column. / légendes d'atelier seulement.
+const style = document.createElement('style')
+style.textContent = `.zr-lab-cap{width:232px;margin:0 0 12px;font-family:var(--zr-police-sans);color:var(--g9-fg);font-size:13px;line-height:1.35;display:grid;gap:4px}
+.zr-lab-cap b{font-family:'GT Sectra LCG','GTSectraLCG',var(--zr-police-serif);font-weight:400;font-size:19px}
+.zr-lab-cap span{color:var(--g9-soft)} .zr-lab-cap .zr-lab-num{font-family:var(--zr-police-serif);color:#cc7c5e;margin-right:4px}
+.zr-lab-cap b .zr-lab-num{color:#cc7c5e}
+figure aside{position:static!important;margin:0!important;max-height:none!important;overflow:visible!important}
+@font-face{font-family:'GT Sectra LCG';src:url('/fonts/GT-Sectra-LCGV-Regular-latin.woff2') format('woff2');font-weight:400;font-style:normal}
+aside.v2-space .zr-ws-heading{border-top:0!important;padding-top:0!important;margin:\${SPACE.zoneGap}px 0 \${SPACE.headGap}px!important}
+aside.v2-space > div > .zr-ws-heading:first-child{margin-top:0!important}
+aside.v2-sectra .zr-ws-heading{font-family:'GT Sectra LCG',var(--zr-police-serif)!important;font-weight:400!important;font-style:normal!important}
+aside.v2-italic .zr-ws-heading{font-style:italic!important}
+@font-face{font-family:'GT Sectra LCG';src:url('/fonts/GT-Sectra-LCGV-Regular-Italic.woff2') format('woff2');font-weight:400;font-style:italic}
+aside.v2-min .v2-tools-foot{margin-top:\${SPACE.toolsGap}px}`
+document.head.appendChild(style)
+createRoot(document.getElementById('root')).render(<Lab />)

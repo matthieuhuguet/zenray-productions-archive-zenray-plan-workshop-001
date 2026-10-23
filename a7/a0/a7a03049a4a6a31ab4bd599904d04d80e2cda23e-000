@@ -1,0 +1,32 @@
+// CheckQuickLook.mjs (23 October 2026): Space opens the selected day and closes it again; never while typing.
+// FR : Espace ouvre le jour sélectionné et le referme ; jamais pendant la saisie.
+import { createRequire } from 'node:module'
+const require = createRequire('/Users/zenray/Create/Build/Productions/GithubProductions/ZenRayProgress/package.json')
+const { chromium } = require('playwright')
+const exe = '/Users/zenray/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell'
+const browser = await chromium.launch({ executablePath: exe })
+const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } })
+const errors = []; page.on('pageerror', (e) => errors.push(String(e)))
+await page.goto('http://127.0.0.1:5212/plan-check.html')
+await page.waitForSelector('.zrp-grid > .zrp-day.zrp-today')
+await page.waitForTimeout(2500)                                  // entry plays, then close it
+await page.keyboard.press('Escape'); await page.waitForTimeout(700)
+const shown = () => page.evaluate(() => getComputedStyle(document.querySelector('.zrp-focus-day')).display)
+const label = () => page.evaluate(() => document.querySelector('.zrp-focus-date')?.textContent)
+const r = {}
+// Select the 24th with one click, then Space. / sélection du 24 puis Espace.
+const box = await page.evaluate(() => { const n = document.querySelector('.zrp-grid > .zrp-day.zrp-today').nextElementSibling; const b = n.getBoundingClientRect(); return { x: b.left + b.width / 2, y: b.bottom - 10 } })
+await page.mouse.click(box.x, box.y); await page.waitForTimeout(400)
+const scroll0 = await page.evaluate(() => document.querySelector('.zr-scene').scrollTop)
+await page.keyboard.press(' '); await page.waitForTimeout(1100)
+r.spaceOpens = await shown(); r.day = await label()
+await page.keyboard.press(' '); await page.waitForTimeout(800)
+r.spaceCloses = await shown()
+r.noTransformLeft = await page.evaluate(() => document.querySelector('.zrp-stage').style.transform || 'none')
+// Typing in the composer title: Space must type, not open. / en saisie, Espace écrit.
+await page.click('.zrp-new'); await page.waitForTimeout(400)
+await page.keyboard.type('a b'); await page.waitForTimeout(300)
+r.typingKeepsClosed = await shown()
+r.typed = await page.evaluate(() => document.querySelector('#zrp-title-input')?.value)
+console.log(JSON.stringify({ ...r, scrollBefore: scroll0, errors }))
+await browser.close()

@@ -1,0 +1,14 @@
+#!/bin/zsh
+# CheckLive.sh (23 October 2026): proves the live site carries the Plan focus and the direct opening. Exit 1 if not.
+# FR : prouve que le site en ligne porte le Focus et l'ouverture directe. Code 1 sinon.
+B=https://zenray-progress.pages.dev
+S=$(curl -s $B/ | grep -o 'assets/index-[^"]*\.js' | head -1)
+curl -s $B/$S -o /tmp/zr-live-index.js
+focus=0; direct=0
+for f in $(grep -o 'assets/[A-Za-z0-9_-]*\.js' /tmp/zr-live-index.js | sort -u) $S; do
+  body=$(curl -s $B/$f)
+  [[ $body == *zrp-focus-layer* ]] && focus=1
+  [[ $body == *ouvrirDirectement* ]] && direct=1
+done
+echo "served $S focus=$focus direct=$direct"
+[[ $focus == 1 && $direct == 1 ]]

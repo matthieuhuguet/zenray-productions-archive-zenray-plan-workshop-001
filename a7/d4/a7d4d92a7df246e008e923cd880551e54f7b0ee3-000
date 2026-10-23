@@ -1,0 +1,20 @@
+// CheckEntry.mjs (23 October 2026): films the full entry from the Plan view (card zoom, week, day) in slow motion.
+// FR : filme toute l'entrée depuis la vue Plan (zoom de la carte, semaine, jour) au ralenti.
+import { createRequire } from 'node:module'
+const require = createRequire('/Users/zenray/Create/Build/Productions/GithubProductions/ZenRayProgress/package.json')
+const { chromium } = require('playwright')
+const PARAMS = { url: 'http://127.0.0.1:5212/plan-check.html?mode=library', rate: 0.1, stepMs: 3500, out: new URL('../check/', import.meta.url).pathname,
+  exe: '/Users/zenray/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell' }
+const browser = await chromium.launch({ executablePath: PARAMS.exe })
+const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, colorScheme: 'dark' })
+const errors = []; page.on('pageerror', (e) => errors.push(String(e)))
+const cdp = await page.context().newCDPSession(page)
+await cdp.send('Animation.enable'); await cdp.send('Animation.setPlaybackRate', { playbackRate: PARAMS.rate })
+await page.goto(PARAMS.url + '&theme=dark')
+await page.waitForSelector('.zrp-stage', { state: 'attached' })
+const t0 = Date.now(), at = async (ms) => { const d = ms - (Date.now() - t0); if (d > 0) await page.waitForTimeout(d) }
+const names = []
+for (const [n, ms] of [['0a', .2], ['0b', .5], ['0c', .9], ['1', 1.6], ['2', 2.2], ['3', 2.7], ['4', 3.4]]) { await at(ms * PARAMS.stepMs); const f = `${PARAMS.out}entry-${n}.png`; await page.screenshot({ path: f }); names.push(f) }
+const final = await page.evaluate(() => ({ widget: getComputedStyle(document.querySelector('.zrp-focus-day')).display, stageOpacity: getComputedStyle(document.querySelector('.zrp-stage')).opacity }))
+console.log(JSON.stringify({ final, errors }))
+await browser.close()
